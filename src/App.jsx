@@ -1,12 +1,19 @@
 import { useState, useEffect, useCallback } from "react"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Cell } from "recharts"
+import { ref, get, set, remove, onValue } from "firebase/database"
+import { db } from "./firebase"
 
-/* ═══ STORAGE (localStorage) ═══ */
+/* ═══ STORAGE ═══ */
+// Session is per-device (localStorage)
+const getSession = () => { try { const v = localStorage.getItem("sb_session"); return v ? JSON.parse(v) : null } catch { return null } }
+const setSession = (val) => { try { if (val === null) localStorage.removeItem("sb_session"); else localStorage.setItem("sb_session", JSON.stringify(val)) } catch {} }
+
+// Shared data via Firebase Realtime Database
 const getS = async (key) => {
-  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null } catch { return null }
+  try { const snap = await get(ref(db, key)); return snap.exists() ? snap.val() : null } catch { return null }
 }
 const setS = async (key, val) => {
-  try { if (val === null) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify(val)) } catch { }
+  try { if (val === null) await remove(ref(db, key)); else await set(ref(db, key), val) } catch {}
 }
 
 /* ═══ HELPERS ═══ */
@@ -260,41 +267,49 @@ export default function ShelterBet() {
   const [detectedAlarm, setDetectedAlarm] = useState(null)   // { ts, area, title }
   const [orefStatus, setOrefStatus] = useState("idle")  // idle | checking | found | error
 
-  const load = useCallback(async () => {
-    try {
-      const [u, r, cr, session] = await Promise.all([getS("sb_users"), getS("sb_rounds"), getS("sb_current"), getS("sb_session")])
-      const users = u || {}
-      setUsers(users); setRounds(r || []); setRound(cr || null)
-      if (session?.uid && users[session.uid]) {
-        setUser({ id: session.uid, ...users[session.uid] })
-        setPage("app")
+  useEffect(() => {
+    const session = getSession()
+    let initialized = false
+    const unsubUsers = onValue(ref(db, "sb_users"), (snap) => {
+      const users = snap.val() || {}
+      setUsers(users)
+      if (!initialized) {
+        if (session?.uid && users[session.uid]) {
+          setUser({ id: session.uid, ...users[session.uid] })
+          setPage("app")
+        }
+        setLoading(false)
+        initialized = true
       }
-    } catch { } finally { setLoading(false) }
+    })
+    const unsubRounds = onValue(ref(db, "sb_rounds"), (snap) => setRounds(snap.val() || []))
+    const unsubCurrent = onValue(ref(db, "sb_current"), (snap) => setRound(snap.val() || null))
+    // Fallback if Firebase is slow
+    const t = setTimeout(() => { if (!initialized) { setLoading(false); initialized = true } }, 5000)
+    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); clearTimeout(t) }
   }, [])
-  useEffect(() => { load(); const iv = setInterval(load, 8000); return () => clearInterval(iv) }, [load])
 
   const doLogin = async () => {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
     if (!uid) return setLoginErr("איך קוראים לך?")
-    const us = await getS("sb_users") || {}
-    if (us[uid]) {
-      await setS("sb_session", { uid })
-      setUser({ id: uid, ...us[uid] }); setUsers(us); setPage("app")
+    if (allUsers[uid]) {
+      setSession({ uid })
+      setUser({ id: uid, ...allUsers[uid] }); setPage("app")
     }
     else { setIsReg(true); setLoginErr("לא מצאנו אותך — הרשם!") }
   }
   const doRegister = async () => {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
     if (!uid) return setLoginErr("מלא את השם 😊")
-    const us = await getS("sb_users") || {}
-    if (us[uid]) return setLoginErr("השם הזה תפוס")
+    if (allUsers[uid]) return setLoginErr("השם הזה תפוס")
     const nu = { displayName: uname.trim(), joinedAt: Date.now(), totalWins: 0 }
-    us[uid] = nu; await setS("sb_users", us)
-    await setS("sb_session", { uid })
-    setUsers(us); setUser({ id: uid, ...nu }); setPage("app")
+    const us = { ...allUsers, [uid]: nu }
+    await setS("sb_users", us)
+    setSession({ uid })
+    setUser({ id: uid, ...nu }); setPage("app")
   }
-  const doLogout = async () => {
-    await setS("sb_session", null)
+  const doLogout = () => {
+    setSession(null)
     setUser(null); setPage("login"); setUname(""); setIsReg(false); setLoginErr(""); setAdminOk(false)
   }
 
@@ -436,11 +451,13 @@ export default function ShelterBet() {
   }
   const doAdminFromLogin = async () => {
     if (adminEntryPw !== ADMIN_PW) return setAdminEntryErr("סיסמה שגויה 🙈")
-    const us = await getS("sb_users") || {}
     const adminId = "__admin__"
-    if (!us[adminId]) { us[adminId] = { displayName: "מנהל", joinedAt: Date.now(), totalWins: 0, isAdmin: true }; await setS("sb_users", us) }
-    await setS("sb_session", { uid: adminId })
-    setUsers(us); setUser({ id: adminId, ...us[adminId] }); setAdminOk(true); setTab("admin"); setPage("app")
+    if (!allUsers[adminId]) {
+      await setS("sb_users", { ...allUsers, [adminId]: { displayName: "מנהל", joinedAt: Date.now(), totalWins: 0, isAdmin: true } })
+    }
+    setSession({ uid: adminId })
+    setUser({ id: adminId, displayName: "מנהל", totalWins: 0, isAdmin: true, ...allUsers[adminId] })
+    setAdminOk(true); setTab("admin"); setPage("app")
   }
 
   const myBet = round?.bets?.[user?.id]
