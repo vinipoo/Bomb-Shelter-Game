@@ -334,8 +334,9 @@ export default function ShelterBet() {
 
   /* ─── oref auto-detect ─────────────────────────────── */
   const OREF_CITY = "גבעתיים"
-  const OREF_HISTORY = "https://www.oref.org.il/WarningMessages/History/AlertsHistory.json"
+  const OREF_HISTORY = "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json"
   const OREF_CURRENT = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
+  const OREF_ROCKET_CATEGORY = 1  // category 1 = ירי רקטות וטילים
 
   const recordAlarmAt = useCallback(async (alarmTs) => {
     const cr = await getS("sb_current")
@@ -373,27 +374,27 @@ export default function ShelterBet() {
         if (text && text.trim() !== "" && text.trim() !== "null" && text.trim() !== "[]") {
           const obj = JSON.parse(text)
           const areas = Array.isArray(obj?.data) ? obj.data : []
-          if (areas.some(a => a.includes(OREF_CITY))) {
-            setDetectedAlarm({ ts: Date.now(), area: OREF_CITY, title: obj.title || "אזעקה", live: true })
+          if (areas.some(a => a === OREF_CITY)) {
+            setDetectedAlarm({ ts: Date.now(), area: OREF_CITY, title: obj.title || "ירי רקטות וטילים", live: true })
             setOrefStatus("found"); return
           }
         }
       }
     } catch { }
     try {
-      // 2. Try history
+      // 2. History — filter by city AND rocket/missile category only
       const histRes = await fetch(OREF_HISTORY, { headers: hdrs, cache: "no-store" })
       if (histRes.ok) {
         const text = (await histRes.text()).replace(/^\uFEFF/, "")
         const data = JSON.parse(text) || []
         const relevant = data.filter(a => {
           const ts = new Date(a.alertDate?.replace(" ", "T")).getTime()
-          return a.data === OREF_CITY && ts > roundStart
+          return a.data === OREF_CITY && a.category === OREF_ROCKET_CATEGORY && ts > roundStart
         })
         if (relevant.length > 0) {
           const latest = relevant.sort((a, b) => new Date(b.alertDate) - new Date(a.alertDate))[0]
           const ts = new Date(latest.alertDate.replace(" ", "T")).getTime()
-          setDetectedAlarm({ ts, area: OREF_CITY, title: latest.title || "אזעקה" })
+          setDetectedAlarm({ ts, area: OREF_CITY, title: latest.title || "ירי רקטות וטילים" })
           setOrefStatus("found"); return
         }
         setOrefStatus("checking")
