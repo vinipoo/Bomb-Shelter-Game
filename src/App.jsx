@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Cell } from "recharts"
 import { ref, get, set, remove, onValue } from "firebase/database"
 import { db } from "./firebase"
@@ -263,9 +263,9 @@ export default function ShelterBet() {
   const [editingUid, setEditingUid] = useState(null); const [editUserName, setEditUserName] = useState("")
   const [editRoundIdx, setEditRoundIdx] = useState(null); const [editRoundDt, setEditRoundDt] = useState("")
   const [adminEntryMode, setAdminEntryMode] = useState(false); const [adminEntryPw, setAdminEntryPw] = useState(""); const [adminEntryErr, setAdminEntryErr] = useState("")
-  const [autoDetect, setAutoDetect] = useState(false)
-  const [detectedAlarm, setDetectedAlarm] = useState(null)   // { ts, area, title }
+  const [detectedAlarm, setDetectedAlarm] = useState(null)
   const [orefStatus, setOrefStatus] = useState("idle")  // idle | checking | found | error
+  const processingAlarm = useRef(false)
 
   useEffect(() => {
     const session = getSession()
@@ -288,6 +288,12 @@ export default function ShelterBet() {
     const t = setTimeout(() => { if (!initialized) { setLoading(false); initialized = true } }, 5000)
     return () => { unsubUsers(); unsubRounds(); unsubCurrent(); clearTimeout(t) }
   }, [])
+
+  // Auto-open a round if none exists
+  useEffect(() => {
+    if (loading || round !== null) return
+    set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {} })
+  }, [loading, round])
 
   const doLogin = async () => {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
@@ -357,12 +363,11 @@ export default function ShelterBet() {
     const wName = us[winner]?.displayName || winner || "—"
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
     setWinAnim(true); setTimeout(() => setWinAnim(false), 2500)
-    // Keep auto-detect alive for the next round, just reset the found state
     setDetectedAlarm(null); setOrefStatus("idle")
   }, [])
 
   const checkOrefAlerts = useCallback(async () => {
-    if (!round?.open) return
+    if (!round?.open || processingAlarm.current) return
     setOrefStatus(st => st === "found" ? "found" : "checking")
     const roundStart = round.createdAt || 0
     const hdrs = { "X-Requested-With": "XMLHttpRequest", "Cache-Control": "no-cache" }
@@ -375,8 +380,13 @@ export default function ShelterBet() {
           const obj = JSON.parse(text)
           const areas = Array.isArray(obj?.data) ? obj.data : []
           if (areas.some(a => a === OREF_CITY)) {
-            setDetectedAlarm({ ts: Date.now(), area: OREF_CITY, title: obj.title || "ירי רקטות וטילים", live: true })
-            setOrefStatus("found"); return
+            processingAlarm.current = true
+            const ts = Date.now()
+            setDetectedAlarm({ ts, area: OREF_CITY, title: obj.title || "ירי רקטות וטילים", live: true })
+            setOrefStatus("found")
+            await recordAlarmAt(ts)
+            processingAlarm.current = false
+            return
           }
         }
       }
@@ -392,22 +402,28 @@ export default function ShelterBet() {
           return a.data === OREF_CITY && a.category === OREF_ROCKET_CATEGORY && ts > roundStart
         })
         if (relevant.length > 0) {
+          processingAlarm.current = true
           const latest = relevant.sort((a, b) => new Date(b.alertDate) - new Date(a.alertDate))[0]
           const ts = new Date(latest.alertDate.replace(" ", "T")).getTime()
           setDetectedAlarm({ ts, area: OREF_CITY, title: latest.title || "ירי רקטות וטילים" })
-          setOrefStatus("found"); return
+          setOrefStatus("found")
+          await recordAlarmAt(ts)
+          processingAlarm.current = false
+          return
         }
         setOrefStatus("checking")
       } else { setOrefStatus("error") }
     } catch { setOrefStatus("error") }
-  }, [round])
+  }, [round, recordAlarmAt])
 
+  // Always-on Oref polling — runs whenever a round is open
   useEffect(() => {
-    if (!autoDetect || !round?.open) return
+    if (!round?.open) return
+    processingAlarm.current = false
     checkOrefAlerts()
     const iv = setInterval(checkOrefAlerts, 10000)
     return () => clearInterval(iv)
-  }, [autoDetect, round?.open, checkOrefAlerts])
+  }, [checkOrefAlerts])
 
   const recordAlarm = async () => {
     if (!alarmDt) return setAdminMsg("בחר את זמן האזעקה")
@@ -863,78 +879,30 @@ export default function ShelterBet() {
                 </div>
 
                 <div className="card card-red" style={{ padding: "18px", marginBottom: "14px" }}>
-                  <div className="section-title">🚨 רישום האזעקה</div>
+                  <div className="section-title">🚨 ניטור פיקוד העורף — גבעתיים</div>
 
-                  {/* ─── AUTO DETECT PANEL ─── */}
-                  <div style={{ marginBottom: "16px", padding: "14px", background: "rgba(0,0,0,.25)", borderRadius: "12px", border: "1px solid rgba(251,113,133,.2)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: autoDetect ? "12px" : "0" }}>
-                      <div>
-                        <span style={{ color: "var(--sky)", fontWeight: 800, fontSize: "13px" }}>🟥 זיהוי אוטומטי — פיקוד העורף</span>
-                        {!autoDetect && <div style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 600, marginTop: "2px" }}>מזהה אזעקות לגבעתיים אוטומטית</div>}
-                      </div>
-                      <button
-                        className={`btn ${autoDetect ? "btn-pink" : "btn-sky"}`}
-                        style={{ padding: "7px 18px", fontSize: "12px" }}
-                        onClick={() => { setAutoDetect(a => !a); setDetectedAlarm(null); setOrefStatus("idle") }}
-                        disabled={!round?.open}
-                      >
-                        {autoDetect ? "⏹ עצור" : "▶ הפעל"}
-                      </button>
+                  {/* Oref auto status */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px", background: "rgba(0,0,0,.2)", borderRadius: "12px", marginBottom: "16px" }}>
+                    <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: orefStatus === "found" ? "var(--mint)" : orefStatus === "error" ? "var(--yellow)" : "var(--sky)", animation: "pulse 1.5s infinite" }} />
+                    <div style={{ fontSize: "13px", fontWeight: 700 }}>
+                      {orefStatus === "idle" && <span style={{ color: "var(--dim)" }}>ממתין לסיבוב פתוח...</span>}
+                      {orefStatus === "checking" && <span style={{ color: "var(--sky)" }}>🔍 בודק אזעקות כל 10 שניות — לא זוהתה אזעקה</span>}
+                      {orefStatus === "error" && <span style={{ color: "var(--yellow)" }}>⚠️ לא ניתן להתחבר ל-API — השתמש בהזנה ידנית</span>}
+                      {orefStatus === "found" && detectedAlarm && (
+                        <span style={{ color: "var(--mint)" }}>✅ אזעקה זוהתה — {fmtDate(detectedAlarm.ts)} · מעבד...</span>
+                      )}
                     </div>
-
-                    {autoDetect && (
-                      <div style={{ fontSize: "13px", fontWeight: 600 }}>
-                        {orefStatus === "idle" && (
-                          <div style={{ color: "var(--dim)", display: "flex", alignItems: "center", gap: "8px" }}>
-                            <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "var(--dim)", animation: "pulse 1.5s infinite" }} />
-                            מחפש אזעקות...
-                          </div>
-                        )}
-                        {orefStatus === "checking" && (
-                          <div style={{ color: "var(--dim)", display: "flex", alignItems: "center", gap: "8px" }}>
-                            <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "var(--mint)", animation: "pulse 1s infinite" }} />
-                            🔍 בדיקה פעילה... לא זוהתה אזעקה לגבעתיים
-                          </div>
-                        )}
-                        {orefStatus === "error" && (
-                          <div style={{ color: "var(--yellow)", display: "flex", alignItems: "center", gap: "8px" }}>
-                            ⚠️ לא ניתן להתחבר ל-API של פיקוד העורף. הזן זמן ידנית.
-                          </div>
-                        )}
-                        {orefStatus === "found" && detectedAlarm && (
-                          <div style={{ animation: "bounceIn .4s ease" }}>
-                            <div style={{ color: "var(--mint)", marginBottom: "10px", fontSize: "14px", fontWeight: 800 }}>
-                              ✅ זוהתה אזעקה בגבעתיים!
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px", background: "rgba(52,211,153,.08)", borderRadius: "10px", marginBottom: "10px" }}>
-                              <span style={{ fontSize: "24px" }}>{detectedAlarm.live ? "🔴" : "🕛"}</span>
-                              <div>
-                                <div style={{ color: "var(--mint)", fontWeight: 800 }}>{detectedAlarm.title}</div>
-                                <div style={{ color: "var(--sky)", fontSize: "16px", fontWeight: 800 }}>{fmtDate(detectedAlarm.ts)}</div>
-                                {detectedAlarm.live && <div style={{ color: "var(--yellow)", fontSize: "11px", fontWeight: 700 }}>⚡ אזעקה חיה כרגע!</div>}
-                              </div>
-                            </div>
-                            <button className="btn btn-pink" style={{ width: "100%", fontSize: "15px", padding: "13px" }}
-                              onClick={() => recordAlarmAt(detectedAlarm.ts)}>
-                              🚨 אשר אזעקה — הכרז זוכה!
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
 
-                  <div style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>או הזן זמן ידנית:</div>
+                  {/* Manual override */}
+                  <div style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>הזנה ידנית (גיבוי):</div>
                   <div style={{ color: "var(--dim)", fontSize: "13px", fontWeight: 600, marginBottom: "14px" }}>
-                    {round?.open
-                      ? `${Object.keys(round.bets || {}).length} שכנים ממתינים לתוצאה`
-                      : "בחר את השעה המדויקת של האזעקה האחרונה"
-                    }
+                    {round?.open ? `${Object.keys(round.bets || {}).length} שכנים ממתינים לתוצאה` : "אין סיבוב פתוח"}
                   </div>
                   <input type="datetime-local" className="ifield" value={alarmDt}
                     onChange={e => setAlarmDt(e.target.value)} style={{ marginBottom: "12px" }} />
                   <button className="btn btn-pink" style={{ width: "100%" }} onClick={recordAlarm}>
-                    🚨 אשר אזעקה — הכרז זוכה!
+                    🚨 אשר אזעקה ידנית
                   </button>
                   {adminMsg && (
                     <div style={{
@@ -1058,7 +1026,15 @@ export default function ShelterBet() {
 
       {/* FOOTER */}
       <div style={{ textAlign: "center", padding: "20px 16px", color: "var(--dim)", fontSize: "12px", fontWeight: 700, borderTop: "1px solid var(--border)", marginTop: "10px" }}>
-        🏠 בניין גבעתיים · {round?.open ? `סיבוב #${rounds.length + 1} פתוח 🟢` : "ממתינים לאזעקה 🔴"} · מתעדכן כל 8 שניות
+        🏠 בניין גבעתיים · {round?.open ? `סיבוב #${rounds.length + 1} פתוח 🟢` : "ממתינים לאזעקה 🔴"}
+        {round?.open && (
+          <span style={{ marginRight: "8px" }}>·{" "}
+            {orefStatus === "checking" ? <span style={{ color: "var(--sky)" }}>🔍 מנטר פיקוד העורף</span>
+              : orefStatus === "found" ? <span style={{ color: "var(--mint)" }}>🚨 אזעקה זוהתה!</span>
+              : orefStatus === "error" ? <span style={{ color: "var(--yellow)" }}>⚠️ API לא זמין</span>
+              : <span>ממתין...</span>}
+          </span>
+        )}
       </div>
     </div>
   )
