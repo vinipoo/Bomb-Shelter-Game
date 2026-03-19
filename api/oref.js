@@ -12,13 +12,20 @@ export default async function handler(req, res) {
 
   try {
     const response = await fetch(url, {
-      headers: { "X-Requested-With": "XMLHttpRequest", "Referer": "https://www.oref.org.il/" },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.oref.org.il/",
+        "Origin": "https://www.oref.org.il",
+        "X-Requested-With": "XMLHttpRequest",
+      },
     })
     const text = await response.text()
     res.setHeader("Cache-Control", "no-store")
     res.setHeader("Content-Type", "application/json; charset=utf-8")
     res.send(text)
-  } catch {
+  } catch (err) {
     res.status(500).json({ error: "Failed to fetch from Oref" })
   }
 }
