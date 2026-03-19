@@ -251,6 +251,7 @@ export default function ShelterBet() {
   const [allUsers, setUsers] = useState({})
   const [rounds, setRounds] = useState([])
   const [round, setRound] = useState(null)
+  const [roundLoaded, setRoundLoaded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [winAnim, setWinAnim] = useState(false)
 
@@ -287,7 +288,7 @@ export default function ShelterBet() {
       }
     })
     const unsubRounds = onValue(ref(db, "sb_rounds"), (snap) => setRounds(snap.val() || []))
-    const unsubCurrent = onValue(ref(db, "sb_current"), (snap) => setRound(snap.val() || null))
+    const unsubCurrent = onValue(ref(db, "sb_current"), (snap) => { setRound(snap.val() || null); setRoundLoaded(true) })
     const unsubLastAlarm = onValue(ref(db, "sb_last_alarm"), (snap) => setLastAlarm(snap.val() || null))
     const unsubOrefPoll = onValue(ref(db, "sb_oref_poll"), (snap) => setOrefPoll(snap.val() || null))
     // Fallback if Firebase is slow
@@ -295,11 +296,11 @@ export default function ShelterBet() {
     return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); unsubOrefPoll(); clearTimeout(t) }
   }, [])
 
-  // Auto-open a round if none exists
+  // Auto-open a round if none exists — only after Firebase confirms sb_current is empty
   useEffect(() => {
-    if (loading || round !== null) return
+    if (!roundLoaded || round !== null) return
     set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true })
-  }, [loading, round])
+  }, [roundLoaded, round])
 
   const doLogin = async () => {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
