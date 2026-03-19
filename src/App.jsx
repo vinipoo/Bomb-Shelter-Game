@@ -26,6 +26,13 @@ const fmtDiff = (ms) => {
   if (m > 0) return `${m}ד׳ ${s}שנ׳`
   return `${s} שנ׳`
 }
+const fmtCountdown = (ms) => {
+  if (ms == null || ms < 0) return "--"
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000), s = Math.floor((ms % 60000) / 1000)
+  return h > 0
+    ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+}
 const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - d.getDay()); return d.getTime() }
 const monthStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(1); return d.getTime() }
 
@@ -268,6 +275,7 @@ export default function ShelterBet() {
   const [orefStatus, setOrefStatus] = useState("idle")  // idle | checking | found | error
   const [lastAlarm, setLastAlarm] = useState(null)
   const [orefPoll, setOrefPoll] = useState(null)
+  const [timeLeft, setTimeLeft] = useState(null)
   const processingAlarm = useRef(false)
 
   useEffect(() => {
@@ -299,7 +307,7 @@ export default function ShelterBet() {
   // Auto-open a round if none exists — only after Firebase confirms sb_current is empty
   useEffect(() => {
     if (!roundLoaded || round !== null) return
-    set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true })
+    set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 })
   }, [roundLoaded, round])
 
   const doLogin = async () => {
@@ -330,6 +338,7 @@ export default function ShelterBet() {
     if (!betDt) return setBetMsg("בחר תאריך ושעה 🕐")
     if (!round?.open) return setBetMsg("ההימורים סגורים עדיין ⏳")
     if (round?.bets?.[user.id]) return setBetMsg("כבר הגשת הימור — לא ניתן לשנות")
+    if (round?.bettingDeadline && Date.now() > round.bettingDeadline) return setBetMsg("⏰ חלון ההימורים נסגר — לא ניתן להגיש הימור")
     const ts = new Date(betDt).getTime()
     if (isNaN(ts)) return setBetMsg("תאריך לא תקין")
     const cr = { ...round, bets: { ...round.bets } }
@@ -341,7 +350,7 @@ export default function ShelterBet() {
   const openRound = async () => {
     const ex = await getS("sb_current")
     if (ex?.open) return setAdminMsg("כבר יש סיבוב פתוח!")
-    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true }
+    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 }
     await setS("sb_current", nr); setRound(nr)
     setAdminMsg("✅ סיבוב חדש נפתח! שכנים יכולים להמר"); setTimeout(() => setAdminMsg(""), 5000)
   }
@@ -373,7 +382,7 @@ export default function ShelterBet() {
     const us = (await getS("sb_users")) || {}
     if (winner && us[winner]) us[winner].totalWins = (us[winner].totalWins || 0) + 1
     // Auto-open next round immediately
-    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true }
+    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 }
     await Promise.all([setS("sb_rounds", allR), setS("sb_users", us), setS("sb_current", nr), setS("sb_last_alarm", alarmTs)])
     setRounds(allR); setUsers(us); setRound(nr); setAlarmDt("")
     const wName = us[winner]?.displayName || winner || "—"
@@ -458,6 +467,16 @@ export default function ShelterBet() {
     }
   }, [orefPoll, round, recordAlarmAt])
 
+  // Countdown timer — ticks every second while a round with a deadline is open
+  useEffect(() => {
+    const deadline = round?.bettingDeadline ?? (round?.createdAt ? round.createdAt + 60 * 60 * 1000 : null)
+    if (!round?.open || !deadline) { setTimeLeft(null); return }
+    const tick = () => setTimeLeft(Math.max(0, deadline - Date.now()))
+    tick()
+    const iv = setInterval(tick, 1000)
+    return () => clearInterval(iv)
+  }, [round?.open, round?.bettingDeadline])
+
   const recordAlarm = async () => {
     if (!alarmDt) return setAdminMsg("בחר את זמן האזעקה")
     await recordAlarmAt(new Date(alarmDt).getTime())
@@ -511,6 +530,8 @@ export default function ShelterBet() {
   }
 
   const myBet = round?.bets?.[user?.id]
+  const bettingClosed = !!((round?.bettingDeadline || round?.createdAt) && timeLeft !== null && timeLeft <= 0)
+  const timerCritical = !!(timeLeft !== null && timeLeft > 0 && timeLeft < 5 * 60 * 1000)
   const lastR = rounds[rounds.length - 1]
   const lb = calcLB(rounds, allUsers, lbScope)
   const lbAll = calcLB(rounds, allUsers, "all")
@@ -660,14 +681,35 @@ export default function ShelterBet() {
         {tab === "bet" && (
           <div>
             {round?.open ? (
-              <div className="card card-mint" style={{ padding: "16px 18px", marginBottom: "14px" }}>
+              <div className={`card ${bettingClosed ? "card-red" : "card-mint"}`} style={{ padding: "16px 18px", marginBottom: "14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <div style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "20px", color: "var(--mint)" }}>🎯 סיבוב #{rounds.length + 1} פתוח!</div>
+                    <div style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "20px", color: bettingClosed ? "var(--red)" : "var(--mint)" }}>
+                      {bettingClosed ? `🔒 סיבוב #${rounds.length + 1} — הימורים נסגרו` : `🎯 סיבוב #${rounds.length + 1} פתוח!`}
+                    </div>
                     <div style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 700, marginTop: "2px" }}>{Object.keys(round.bets || {}).length} שכנים הגישו הימור</div>
                   </div>
-                  <div style={{ fontSize: "32px", animation: "float 2.5s ease-in-out infinite" }}>🚀</div>
+                  <div style={{ fontSize: "32px", animation: "float 2.5s ease-in-out infinite" }}>{bettingClosed ? "🔒" : "🚀"}</div>
                 </div>
+                {(round?.bettingDeadline || round?.createdAt) && timeLeft !== null && (
+                  <div style={{ marginTop: "12px", textAlign: "center", padding: "10px 12px", background: "rgba(0,0,0,.25)", borderRadius: "12px" }}>
+                    {timeLeft > 0 ? (
+                      <>
+                        <div style={{ fontSize: "11px", color: "var(--dim)", fontWeight: 700, marginBottom: "3px" }}>⏱ נותר לרישום הימור</div>
+                        <div style={{
+                          fontFamily: "'Noto Sans Hebrew', sans-serif", fontSize: "36px", fontWeight: 900, letterSpacing: "3px",
+                          color: timerCritical ? "var(--red)" : "var(--mint)",
+                          animation: timerCritical ? "pulse 1s ease infinite" : "none"
+                        }}>
+                          {fmtCountdown(timeLeft)}
+                        </div>
+                        {timerCritical && <div style={{ fontSize: "11px", color: "var(--red)", fontWeight: 700, marginTop: "3px" }}>⚠️ מהרו! נותר פחות מ-5 דקות</div>}
+                      </>
+                    ) : (
+                      <div style={{ color: "var(--red)", fontWeight: 800, fontSize: "14px" }}>⏰ חלון ההימורים נסגר</div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="card" style={{ padding: "16px 18px", marginBottom: "14px", borderColor: "rgba(251,113,133,.3)" }}>
@@ -719,13 +761,18 @@ export default function ShelterBet() {
                     <div style={{ color: "var(--dim)", fontSize: "11px", marginTop: "4px" }}>הוגש {fmtDate(myBet.placedAt)}</div>
                   </div>
                 )}
-                {!myBet && (
+                {!myBet && !bettingClosed && (
                   <>
                     <div style={{ color: "var(--dim)", fontSize: "13px", fontWeight: 600, marginBottom: "10px" }}>מתי לדעתך תהיה האזעקה הבאה? 🤔</div>
                     <input type="datetime-local" className="ifield" value={betDt} onChange={e => setBetDt(e.target.value)} style={{ marginBottom: "10px" }} />
                     <button className="btn btn-sky" style={{ width: "100%" }} onClick={placeBet}>🎯 נעל הימור!</button>
                     {betMsg && <div style={{ color: betMsg.startsWith("🎉") ? "var(--mint)" : "var(--red)", fontSize: "14px", fontWeight: 700, textAlign: "center", marginTop: "10px", animation: "pop .3s ease" }}>{betMsg}</div>}
                   </>
+                )}
+                {!myBet && bettingClosed && (
+                  <div style={{ textAlign: "center", padding: "14px", color: "var(--red)", fontWeight: 800, fontSize: "14px", background: "rgba(251,113,133,.08)", borderRadius: "12px" }}>
+                    ⏰ חלון ההימורים נסגר — לא ניתן להגיש הימור
+                  </div>
                 )}
               </div>
             )}
