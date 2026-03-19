@@ -344,24 +344,16 @@ export default function ShelterBet() {
   /* ─── oref auto-detect ─────────────────────────────── */
   const OREF_CITY = "גבעתיים"
   const OREF_ROCKET_CATEGORY = 1
-  const OREF_HISTORY_BASE = "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json"
-  const OREF_CURRENT_BASE = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
-  const PROXIES = [
-    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    url => `https://thingproxy.freeboard.io/fetch/${url}`,
-  ]
+  const VERCEL_PROXY = "https://bomb-shelter-game.vercel.app/api/oref"
+  const OREF_HISTORY = `${VERCEL_PROXY}?type=history`
+  const OREF_CURRENT = `${VERCEL_PROXY}?type=current`
   const fetchOref = async (url) => {
-    for (const proxy of PROXIES) {
-      try {
-        const res = await fetch(proxy(url), { cache: "no-store" })
-        if (res.ok) return res
-      } catch { }
-    }
+    try {
+      const res = await fetch(url, { cache: "no-store" })
+      if (res.ok) return res
+    } catch { }
     return null
   }
-  const OREF_HISTORY = OREF_HISTORY_BASE
-  const OREF_CURRENT = OREF_CURRENT_BASE
 
   const recordAlarmAt = useCallback(async (alarmTs) => {
     const cr = await getS("sb_current")
