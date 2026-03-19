@@ -263,7 +263,7 @@ export default function ShelterBet() {
   const [winAnim, setWinAnim] = useState(false)
 
   const [uname, setUname] = useState("")
-  const [isReg, setIsReg] = useState(false); const [loginErr, setLoginErr] = useState("")
+  const [isReg, setIsReg] = useState(false); const [loginErr, setLoginErr] = useState(""); const [loginMsg, setLoginMsg] = useState("")
   const [betDt, setBetDt] = useState(""); const [betMsg, setBetMsg] = useState("")
   const [lbScope, setLbScope] = useState("weekly")
   const [adminPw, setAdminPw] = useState(""); const [adminOk, setAdminOk] = useState(false)
@@ -285,7 +285,7 @@ export default function ShelterBet() {
     const unsubUsers = onValue(ref(db, "sb_users"), (snap) => {
       const users = snap.val() || {}
       setUsers(users)
-      if (!autoLoginDone && session?.uid && users[session.uid]) {
+      if (!autoLoginDone && session?.uid && users[session.uid] && !users[session.uid].pending) {
         autoLoginDone = true
         setUser({ id: session.uid, ...users[session.uid] })
         setPage("app")
@@ -314,6 +314,7 @@ export default function ShelterBet() {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
     if (!uid) return setLoginErr("איך קוראים לך?")
     if (allUsers[uid]) {
+      if (allUsers[uid].pending) return setLoginErr("⏳ הבקשה שלך ממתינה לאישור המנהל")
       setSession({ uid })
       setUser({ id: uid, ...allUsers[uid] }); setPage("app")
     }
@@ -323,11 +324,11 @@ export default function ShelterBet() {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
     if (!uid) return setLoginErr("מלא את השם 😊")
     if (allUsers[uid]) return setLoginErr("השם הזה תפוס")
-    const nu = { displayName: uname.trim(), joinedAt: Date.now(), totalWins: 0 }
+    const nu = { displayName: uname.trim(), joinedAt: Date.now(), totalWins: 0, pending: true }
     const us = { ...allUsers, [uid]: nu }
     await setS("sb_users", us)
-    setSession({ uid })
-    setUser({ id: uid, ...nu }); setPage("app")
+    setIsReg(false); setUname(""); setLoginErr("")
+    setLoginMsg(`✅ הבקשה נשלחה! ברגע שהמנהל יאשר את "${uname.trim()}" תוכל להיכנס 🏠`)
   }
   const doLogout = () => {
     setSession(null)
@@ -481,6 +482,19 @@ export default function ShelterBet() {
     if (!alarmDt) return setAdminMsg("בחר את זמן האזעקה")
     await recordAlarmAt(new Date(alarmDt).getTime())
   }
+  const approveUser = async (uid) => {
+    const { pending, ...approved } = allUsers[uid]
+    const us = { ...allUsers, [uid]: approved }
+    await setS("sb_users", us); setUsers(us)
+    setAdminMsg(`✅ ${allUsers[uid].displayName} אושר והצטרף לבניין! 🏠`); setTimeout(() => setAdminMsg(""), 4000)
+  }
+  const rejectUser = async (uid) => {
+    const name = allUsers[uid]?.displayName || uid
+    if (!window.confirm(`לדחות את "${name}"?`)) return
+    const us = { ...allUsers }; delete us[uid]
+    await setS("sb_users", us); setUsers(us)
+    setAdminMsg(`🚫 הבקשה של "${name}" נדחתה`); setTimeout(() => setAdminMsg(""), 4000)
+  }
   const deleteUser = async (uid) => {
     const name = allUsers[uid]?.displayName || uid
     if (!window.confirm(`למחוק את המשתמש "${name}"?`)) return
@@ -594,6 +608,7 @@ export default function ShelterBet() {
             </div>
           )}
           {loginErr && <div style={{ color: "var(--red)", fontSize: "13px", fontWeight: 700, textAlign: "center", margin: "8px 0", animation: "pop .2s ease" }}>{loginErr}</div>}
+          {loginMsg && <div style={{ color: "var(--mint)", fontSize: "13px", fontWeight: 700, textAlign: "center", margin: "8px 0", padding: "12px", background: "rgba(52,211,153,.08)", borderRadius: "10px", animation: "fadeUp .3s ease" }}>{loginMsg}</div>}
           <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
             {!isReg
               ? <><button className="btn btn-sky" style={{ flex: 1 }} onClick={doLogin}>כניסה 👋</button>
@@ -1092,12 +1107,33 @@ export default function ShelterBet() {
                   }
                 </div>
 
+                {/* ── Pending Approvals ── */}
+                {Object.entries(allUsers).some(([k, u]) => k !== "__admin__" && u.pending) && (
+                  <div className="card card-yellow" style={{ padding: "0", overflow: "hidden", marginTop: "14px" }}>
+                    <div style={{ padding: "14px 18px 8px" }}>
+                      <div className="section-title">⏳ ממתינים לאישור ({Object.entries(allUsers).filter(([k, u]) => k !== "__admin__" && u.pending).length})</div>
+                    </div>
+                    {Object.entries(allUsers).filter(([k, u]) => k !== "__admin__" && u.pending).map(([uid, u]) => (
+                      <div key={uid} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div>
+                          <span style={{ fontWeight: 700, fontSize: "14px", color: "var(--yellow)" }}>👤 {u.displayName}</span>
+                          <div style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 600, marginTop: "2px" }}>נרשם {fmtDate(u.joinedAt)}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button className="btn btn-mint" style={{ padding: "6px 14px", fontSize: "12px" }} onClick={() => approveUser(uid)}>✅ אשר</button>
+                          <button className="btn" style={{ padding: "6px 12px", fontSize: "12px", background: "linear-gradient(135deg,#991b1b,#fb7185)", color: "#fff" }} onClick={() => rejectUser(uid)}>🚫 דחה</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* ── Users Management ── */}
                 <div className="card" style={{ padding: "0", overflow: "hidden", marginTop: "14px" }}>
                   <div style={{ padding: "14px 18px 8px" }}><div className="section-title">👥 ניהול משתמשים ({Object.keys(allUsers).filter(k => k !== "__admin__").length})</div></div>
-                  {Object.entries(allUsers).filter(([k]) => k !== "__admin__").length === 0
+                  {Object.entries(allUsers).filter(([k, u]) => k !== "__admin__" && !u.pending).length === 0
                     ? <div style={{ textAlign: "center", padding: "20px", color: "var(--dim)", fontWeight: 700 }}>אין משתמשים</div>
-                    : Object.entries(allUsers).filter(([k]) => k !== "__admin__").map(([uid, u]) => (
+                    : Object.entries(allUsers).filter(([k, u]) => k !== "__admin__" && !u.pending).map(([uid, u]) => (
                       <div key={uid} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
                         {editingUid === uid
                           ? <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
