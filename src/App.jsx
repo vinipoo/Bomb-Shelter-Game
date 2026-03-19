@@ -343,10 +343,25 @@ export default function ShelterBet() {
 
   /* ─── oref auto-detect ─────────────────────────────── */
   const OREF_CITY = "גבעתיים"
-  const PROXY = "https://corsproxy.io/?"
-  const OREF_HISTORY = `${PROXY}https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json`
-  const OREF_CURRENT = `${PROXY}https://www.oref.org.il/WarningMessages/alert/alerts.json`
-  const OREF_ROCKET_CATEGORY = 1  // category 1 = ירי רקטות וטילים
+  const OREF_ROCKET_CATEGORY = 1
+  const OREF_HISTORY_BASE = "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json"
+  const OREF_CURRENT_BASE = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
+  const PROXIES = [
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://thingproxy.freeboard.io/fetch/${url}`,
+  ]
+  const fetchOref = async (url) => {
+    for (const proxy of PROXIES) {
+      try {
+        const res = await fetch(proxy(url), { cache: "no-store" })
+        if (res.ok) return res
+      } catch { }
+    }
+    return null
+  }
+  const OREF_HISTORY = OREF_HISTORY_BASE
+  const OREF_CURRENT = OREF_CURRENT_BASE
 
   const recordAlarmAt = useCallback(async (alarmTs) => {
     const cr = await getS("sb_current")
@@ -376,7 +391,7 @@ export default function ShelterBet() {
     const roundStart = round.createdAt || 0
     try {
       // 1. Try current live alert
-      const curRes = await fetch(OREF_CURRENT, { cache: "no-store" })
+      const curRes = await fetchOref(OREF_CURRENT)
       if (curRes.ok) {
         const text = (await curRes.text()).replace(/^\uFEFF/, "")
         if (text && text.trim() !== "" && text.trim() !== "null" && text.trim() !== "[]") {
@@ -396,7 +411,7 @@ export default function ShelterBet() {
     } catch { }
     try {
       // 2. History — filter by city AND rocket/missile category only
-      const histRes = await fetch(OREF_HISTORY, { cache: "no-store" })
+      const histRes = await fetchOref(OREF_HISTORY)
       if (histRes.ok) {
         const text = (await histRes.text()).replace(/^\uFEFF/, "")
         const data = JSON.parse(text) || []
