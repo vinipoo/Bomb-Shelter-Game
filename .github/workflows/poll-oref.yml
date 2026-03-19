@@ -1,0 +1,51 @@
+name: Poll Oref Alerts
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"  # every 5 minutes
+  workflow_dispatch:
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Oref and write to Firebase
+        run: |
+          RESPONSE=$(curl -s \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" \
+            -H "Referer: https://www.oref.org.il/" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -H "Accept: application/json" \
+            "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json")
+
+          echo "Oref response: $RESPONSE"
+
+          # Parse latest Givataim rocket alert timestamp
+          TS=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              alerts = [a for a in data if a.get('data') == 'גבעתיים' and a.get('category') == 1]
+              if alerts:
+                  alerts.sort(key=lambda x: x.get('alertDate',''), reverse=True)
+                  from datetime import datetime
+                  dt = datetime.strptime(alerts[0]['alertDate'], '%Y-%m-%d %H:%M:%S')
+                  import calendar
+                  print(int(calendar.timegm(dt.timetuple())) * 1000)
+              else:
+                  print('')
+          except Exception as e:
+              print('')
+          ")
+
+          echo "Latest Givataim alarm ts: $TS"
+
+          if [ -n "$TS" ]; then
+            curl -s -X PUT \
+              -H "Content-Type: application/json" \
+              -d "$TS" \
+              "https://shelter-bet-default-rtdb.firebaseio.com/sb_oref_poll.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
+            echo "Written to Firebase: $TS"
+          else
+            echo "No Givataim alerts found"
+          fi

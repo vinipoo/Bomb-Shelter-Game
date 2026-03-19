@@ -266,6 +266,7 @@ export default function ShelterBet() {
   const [detectedAlarm, setDetectedAlarm] = useState(null)
   const [orefStatus, setOrefStatus] = useState("idle")  // idle | checking | found | error
   const [lastAlarm, setLastAlarm] = useState(null)
+  const [orefPoll, setOrefPoll] = useState(null)
   const processingAlarm = useRef(false)
 
   useEffect(() => {
@@ -286,9 +287,10 @@ export default function ShelterBet() {
     const unsubRounds = onValue(ref(db, "sb_rounds"), (snap) => setRounds(snap.val() || []))
     const unsubCurrent = onValue(ref(db, "sb_current"), (snap) => setRound(snap.val() || null))
     const unsubLastAlarm = onValue(ref(db, "sb_last_alarm"), (snap) => setLastAlarm(snap.val() || null))
+    const unsubOrefPoll = onValue(ref(db, "sb_oref_poll"), (snap) => setOrefPoll(snap.val() || null))
     // Fallback if Firebase is slow
     const t = setTimeout(() => { if (!initialized) { setLoading(false); initialized = true } }, 5000)
-    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); clearTimeout(t) }
+    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); unsubOrefPoll(); clearTimeout(t) }
   }, [])
 
   // Auto-open a round if none exists
@@ -442,6 +444,16 @@ export default function ShelterBet() {
     const iv = setInterval(checkOrefAlerts, 10000)
     return () => clearInterval(iv)
   }, [checkOrefAlerts])
+
+  // GitHub Actions poll result — triggers round close when new Givataim alarm detected
+  useEffect(() => {
+    if (!orefPoll || !round?.open || processingAlarm.current) return
+    if (orefPoll > (round.createdAt || 0)) {
+      processingAlarm.current = true
+      setOrefStatus("found")
+      recordAlarmAt(orefPoll).then(() => { processingAlarm.current = false })
+    }
+  }, [orefPoll, round, recordAlarmAt])
 
   const recordAlarm = async () => {
     if (!alarmDt) return setAdminMsg("בחר את זמן האזעקה")
