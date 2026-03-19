@@ -292,7 +292,7 @@ export default function ShelterBet() {
   // Auto-open a round if none exists
   useEffect(() => {
     if (loading || round !== null) return
-    set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {} })
+    set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true })
   }, [loading, round])
 
   const doLogin = async () => {
@@ -334,15 +334,16 @@ export default function ShelterBet() {
   const openRound = async () => {
     const ex = await getS("sb_current")
     if (ex?.open) return setAdminMsg("כבר יש סיבוב פתוח!")
-    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {} }
+    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true }
     await setS("sb_current", nr); setRound(nr)
     setAdminMsg("✅ סיבוב חדש נפתח! שכנים יכולים להמר"); setTimeout(() => setAdminMsg(""), 5000)
   }
 
   /* ─── oref auto-detect ─────────────────────────────── */
   const OREF_CITY = "גבעתיים"
-  const OREF_HISTORY = "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json"
-  const OREF_CURRENT = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
+  const PROXY = "https://corsproxy.io/?"
+  const OREF_HISTORY = `${PROXY}https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json`
+  const OREF_CURRENT = `${PROXY}https://www.oref.org.il/WarningMessages/alert/alerts.json`
   const OREF_ROCKET_CATEGORY = 1  // category 1 = ירי רקטות וטילים
 
   const recordAlarmAt = useCallback(async (alarmTs) => {
@@ -371,10 +372,9 @@ export default function ShelterBet() {
     if (!round?.open || processingAlarm.current) return
     setOrefStatus(st => st === "found" ? "found" : "checking")
     const roundStart = round.createdAt || 0
-    const hdrs = { "X-Requested-With": "XMLHttpRequest", "Cache-Control": "no-cache" }
     try {
       // 1. Try current live alert
-      const curRes = await fetch(OREF_CURRENT, { headers: hdrs, cache: "no-store" })
+      const curRes = await fetch(OREF_CURRENT, { cache: "no-store" })
       if (curRes.ok) {
         const text = (await curRes.text()).replace(/^\uFEFF/, "")
         if (text && text.trim() !== "" && text.trim() !== "null" && text.trim() !== "[]") {
@@ -394,7 +394,7 @@ export default function ShelterBet() {
     } catch { }
     try {
       // 2. History — filter by city AND rocket/missile category only
-      const histRes = await fetch(OREF_HISTORY, { headers: hdrs, cache: "no-store" })
+      const histRes = await fetch(OREF_HISTORY, { cache: "no-store" })
       if (histRes.ok) {
         const text = (await histRes.text()).replace(/^\uFEFF/, "")
         const data = JSON.parse(text) || []
@@ -690,7 +690,7 @@ export default function ShelterBet() {
                 {!myBet && (
                   <>
                     <div style={{ color: "var(--dim)", fontSize: "13px", fontWeight: 600, marginBottom: "10px" }}>מתי לדעתך תהיה האזעקה הבאה? 🤔</div>
-                    <input type="datetime-local" className="ifield" value={betDt} onChange={e => setBetDt(e.target.value)} style={{ marginBottom: "10px", opacity: !round?.openedAfterAlarm ? 0.4 : 1, pointerEvents: !round?.openedAfterAlarm ? "none" : "auto" }} disabled={!round?.openedAfterAlarm} />
+                    <input type="datetime-local" className="ifield" value={betDt} onChange={e => setBetDt(e.target.value)} style={{ marginBottom: "10px" }} />
                     <button className="btn btn-sky" style={{ width: "100%" }} onClick={placeBet}>🎯 נעל הימור!</button>
                     {betMsg && <div style={{ color: betMsg.startsWith("🎉") ? "var(--mint)" : "var(--red)", fontSize: "14px", fontWeight: 700, textAlign: "center", marginTop: "10px", animation: "pop .3s ease" }}>{betMsg}</div>}
                   </>
