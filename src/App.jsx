@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
+import WinnerPopup from "./WinnerPopup.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Cell } from "recharts"
 import { ref, get, set, remove, onValue } from "firebase/database"
 import { db } from "./firebase"
@@ -261,6 +262,7 @@ export default function ShelterBet() {
   const [roundLoaded, setRoundLoaded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [winAnim, setWinAnim] = useState(false)
+  const [winnerPopup, setWinnerPopup] = useState(null)
 
   const [uname, setUname] = useState("")
   const [isReg, setIsReg] = useState(false); const [loginErr, setLoginErr] = useState(""); const [loginMsg, setLoginMsg] = useState("")
@@ -390,6 +392,13 @@ export default function ShelterBet() {
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
     setWinAnim(true); setTimeout(() => setWinAnim(false), 2500)
     setDetectedAlarm(null); setOrefStatus("idle")
+    if (winner && us[winner] && bets[winner]) {
+      setWinnerPopup({
+        winner: { name: us[winner].displayName || winner, badge: getBadge(us[winner].totalWins), totalWins: us[winner].totalWins },
+        alarmAt: alarmTs,
+        betTs: bets[winner].ts,
+      })
+    }
   }, [])
 
   const checkOrefAlerts = useCallback(async () => {
@@ -1218,6 +1227,15 @@ export default function ShelterBet() {
           </div>
         )}
       </div>
+
+      {winnerPopup && (
+        <WinnerPopup
+          winner={winnerPopup.winner}
+          alarmAt={winnerPopup.alarmAt}
+          betTs={winnerPopup.betTs}
+          onClose={() => setWinnerPopup(null)}
+        />
+      )}
 
       {/* FOOTER */}
       <div style={{ textAlign: "center", padding: "16px 16px 20px", borderTop: "1px solid var(--border)", marginTop: "10px" }}>
