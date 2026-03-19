@@ -272,14 +272,16 @@ export default function ShelterBet() {
   useEffect(() => {
     const session = getSession()
     let initialized = false
+    let autoLoginDone = false
     const unsubUsers = onValue(ref(db, "sb_users"), (snap) => {
       const users = snap.val() || {}
       setUsers(users)
+      if (!autoLoginDone && session?.uid && users[session.uid]) {
+        autoLoginDone = true
+        setUser({ id: session.uid, ...users[session.uid] })
+        setPage("app")
+      }
       if (!initialized) {
-        if (session?.uid && users[session.uid]) {
-          setUser({ id: session.uid, ...users[session.uid] })
-          setPage("app")
-        }
         setLoading(false)
         initialized = true
       }
