@@ -265,6 +265,7 @@ export default function ShelterBet() {
   const [adminEntryMode, setAdminEntryMode] = useState(false); const [adminEntryPw, setAdminEntryPw] = useState(""); const [adminEntryErr, setAdminEntryErr] = useState("")
   const [detectedAlarm, setDetectedAlarm] = useState(null)
   const [orefStatus, setOrefStatus] = useState("idle")  // idle | checking | found | error
+  const [lastAlarm, setLastAlarm] = useState(null)
   const processingAlarm = useRef(false)
 
   useEffect(() => {
@@ -284,9 +285,10 @@ export default function ShelterBet() {
     })
     const unsubRounds = onValue(ref(db, "sb_rounds"), (snap) => setRounds(snap.val() || []))
     const unsubCurrent = onValue(ref(db, "sb_current"), (snap) => setRound(snap.val() || null))
+    const unsubLastAlarm = onValue(ref(db, "sb_last_alarm"), (snap) => setLastAlarm(snap.val() || null))
     // Fallback if Firebase is slow
     const t = setTimeout(() => { if (!initialized) { setLoading(false); initialized = true } }, 5000)
-    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); clearTimeout(t) }
+    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); clearTimeout(t) }
   }, [])
 
   // Auto-open a round if none exists
@@ -360,7 +362,7 @@ export default function ShelterBet() {
     if (winner && us[winner]) us[winner].totalWins = (us[winner].totalWins || 0) + 1
     // Auto-open next round immediately
     const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true }
-    await Promise.all([setS("sb_rounds", allR), setS("sb_users", us), setS("sb_current", nr)])
+    await Promise.all([setS("sb_rounds", allR), setS("sb_users", us), setS("sb_current", nr), setS("sb_last_alarm", alarmTs)])
     setRounds(allR); setUsers(us); setRound(nr); setAlarmDt("")
     const wName = us[winner]?.displayName || winner || "—"
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
@@ -398,9 +400,17 @@ export default function ShelterBet() {
       if (histRes.ok) {
         const text = (await histRes.text()).replace(/^\uFEFF/, "")
         const data = JSON.parse(text) || []
-        const relevant = data.filter(a => {
+        const givataim = data.filter(a => a.data === OREF_CITY && a.category === OREF_ROCKET_CATEGORY)
+        // Always update last alarm from history (any time, not just since round start)
+        if (givataim.length > 0) {
+          const latestAny = givataim.sort((a, b) => new Date(b.alertDate) - new Date(a.alertDate))[0]
+          const latestTs = new Date(latestAny.alertDate.replace(" ", "T")).getTime()
+          const stored = await getS("sb_last_alarm")
+          if (!stored || latestTs > stored) await setS("sb_last_alarm", latestTs)
+        }
+        const relevant = givataim.filter(a => {
           const ts = new Date(a.alertDate?.replace(" ", "T")).getTime()
-          return a.data === OREF_CITY && a.category === OREF_ROCKET_CATEGORY && ts > roundStart
+          return ts > roundStart
         })
         if (relevant.length > 0) {
           processingAlarm.current = true
@@ -1105,16 +1115,28 @@ export default function ShelterBet() {
       </div>
 
       {/* FOOTER */}
-      <div style={{ textAlign: "center", padding: "20px 16px", color: "var(--dim)", fontSize: "12px", fontWeight: 700, borderTop: "1px solid var(--border)", marginTop: "10px" }}>
-        🏠 בניין גבעתיים · {round?.open ? `סיבוב #${rounds.length + 1} פתוח 🟢` : "ממתינים לאזעקה 🔴"}
-        {round?.open && (
-          <span style={{ marginRight: "8px" }}>·{" "}
-            {orefStatus === "checking" ? <span style={{ color: "var(--sky)" }}>🔍 מנטר פיקוד העורף</span>
-              : orefStatus === "found" ? <span style={{ color: "var(--mint)" }}>🚨 אזעקה זוהתה!</span>
-              : orefStatus === "error" ? <span style={{ color: "var(--yellow)" }}>⚠️ API לא זמין</span>
-              : <span>ממתין...</span>}
-          </span>
-        )}
+      <div style={{ textAlign: "center", padding: "16px 16px 20px", borderTop: "1px solid var(--border)", marginTop: "10px" }}>
+        {/* Last alarm banner */}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", background: "rgba(251,191,36,.08)", border: "1px solid rgba(251,191,36,.2)", borderRadius: "10px", padding: "8px 16px", marginBottom: "10px" }}>
+          <span style={{ fontSize: "16px" }}>🚨</span>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "11px", color: "var(--dim)", fontWeight: 700 }}>אזעקה אחרונה בגבעתיים</div>
+            <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--yellow)", fontFamily: "'Noto Sans Hebrew', sans-serif" }}>
+              {lastAlarm ? fmtDate(lastAlarm) : "לא זוהתה עדיין"}
+            </div>
+          </div>
+        </div>
+        <div style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 700 }}>
+          🏠 בניין גבעתיים · {round?.open ? `סיבוב #${rounds.length + 1} פתוח 🟢` : "ממתינים לאזעקה 🔴"}
+          {round?.open && (
+            <span style={{ marginRight: "8px" }}>·{" "}
+              {orefStatus === "checking" ? <span style={{ color: "var(--sky)" }}>🔍 מנטר פיקוד העורף</span>
+                : orefStatus === "found" ? <span style={{ color: "var(--mint)" }}>🚨 אזעקה זוהתה!</span>
+                : orefStatus === "error" ? <span style={{ color: "var(--yellow)" }}>⚠️ API לא זמין</span>
+                : <span>ממתין...</span>}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   )
