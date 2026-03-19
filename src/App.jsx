@@ -322,6 +322,7 @@ export default function ShelterBet() {
   const placeBet = async () => {
     if (!betDt) return setBetMsg("בחר תאריך ושעה 🕐")
     if (!round?.open) return setBetMsg("ההימורים סגורים עדיין ⏳")
+    if (round?.bets?.[user.id]) return setBetMsg("כבר הגשת הימור — לא ניתן לשנות")
     const ts = new Date(betDt).getTime()
     if (isNaN(ts)) return setBetMsg("תאריך לא תקין")
     const cr = { ...round, bets: { ...round.bets } }
@@ -357,7 +358,7 @@ export default function ShelterBet() {
     const us = (await getS("sb_users")) || {}
     if (winner && us[winner]) us[winner].totalWins = (us[winner].totalWins || 0) + 1
     // Auto-open next round immediately
-    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {} }
+    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true }
     await Promise.all([setS("sb_rounds", allR), setS("sb_users", us), setS("sb_current", nr)])
     setRounds(allR); setUsers(us); setRound(nr); setAlarmDt("")
     const wName = us[winner]?.displayName || winner || "—"
@@ -686,12 +687,14 @@ export default function ShelterBet() {
                     <div style={{ color: "var(--dim)", fontSize: "11px", marginTop: "4px" }}>הוגש {fmtDate(myBet.placedAt)}</div>
                   </div>
                 )}
-                {!myBet && <div style={{ color: "var(--dim)", fontSize: "13px", fontWeight: 600, marginBottom: "10px" }}>מתי לדעתך תהיה האזעקה הבאה? 🤔</div>}
-                <input type="datetime-local" className="ifield" value={betDt} onChange={e => setBetDt(e.target.value)} style={{ marginBottom: "10px" }} />
-                <button className="btn btn-sky" style={{ width: "100%" }} onClick={placeBet}>
-                  {myBet ? "🔄 עדכן הימור" : "🎯 נעל הימור!"}
-                </button>
-                {betMsg && <div style={{ color: betMsg.startsWith("🎉") ? "var(--mint)" : "var(--red)", fontSize: "14px", fontWeight: 700, textAlign: "center", marginTop: "10px", animation: "pop .3s ease" }}>{betMsg}</div>}
+                {!myBet && (
+                  <>
+                    <div style={{ color: "var(--dim)", fontSize: "13px", fontWeight: 600, marginBottom: "10px" }}>מתי לדעתך תהיה האזעקה הבאה? 🤔</div>
+                    <input type="datetime-local" className="ifield" value={betDt} onChange={e => setBetDt(e.target.value)} style={{ marginBottom: "10px", opacity: !round?.openedAfterAlarm ? 0.4 : 1, pointerEvents: !round?.openedAfterAlarm ? "none" : "auto" }} disabled={!round?.openedAfterAlarm} />
+                    <button className="btn btn-sky" style={{ width: "100%" }} onClick={placeBet}>🎯 נעל הימור!</button>
+                    {betMsg && <div style={{ color: betMsg.startsWith("🎉") ? "var(--mint)" : "var(--red)", fontSize: "14px", fontWeight: 700, textAlign: "center", marginTop: "10px", animation: "pop .3s ease" }}>{betMsg}</div>}
+                  </>
+                )}
               </div>
             )}
 
@@ -710,6 +713,83 @@ export default function ShelterBet() {
                         <div style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 600 }}>{bdg.label}</div>
                       </div>
                       <div style={{ fontWeight: 800, fontSize: "13px", color: uid === user.id ? "var(--sky)" : "var(--dim)" }}>{fmtDate(bet.ts)}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* ══ ALWAYS-VISIBLE FULL HISTORY ══ */}
+            {rounds.length > 0 && (
+              <div style={{ marginTop: "18px" }}>
+                <div className="section-title" style={{ marginBottom: "10px", paddingRight: "4px" }}>📜 היסטוריה ({rounds.length} סיבובים)</div>
+                {rounds.slice().reverse().map((r, i) => {
+                  const roundNum = rounds.length - i
+                  const betsArr = Object.entries(r.bets || {})
+                  const sorted = r.alarmAt
+                    ? betsArr.sort((a, b) => Math.abs(a[1].ts - r.alarmAt) - Math.abs(b[1].ts - r.alarmAt))
+                    : betsArr.sort((a, b) => a[1].ts - b[1].ts)
+                  return (
+                    <div key={r.id} className="card" style={{ padding: "0", overflow: "hidden", marginBottom: "12px" }}>
+                      {/* Round header */}
+                      <div style={{ padding: "12px 16px", background: r.alarmAt ? "rgba(251,191,36,.07)" : "rgba(56,189,248,.05)", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <span style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "15px", fontWeight: 800, color: r.alarmAt ? "var(--yellow)" : "var(--sky)" }}>
+                            {r.alarmAt ? "🔔" : "🎯"} סיבוב #{roundNum}
+                          </span>
+                          {r.alarmAt && (
+                            <span style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 700, marginRight: "8px" }}>
+                              אזעקה: {fmtDate(r.alarmAt)}
+                            </span>
+                          )}
+                          {!r.alarmAt && (
+                            <span style={{ color: "var(--sky)", fontSize: "11px", fontWeight: 700, marginRight: "8px" }}>פתוח</span>
+                          )}
+                        </div>
+                        <span style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 600 }}>{betsArr.length} הימורים</span>
+                      </div>
+
+                      {/* Winner row */}
+                      {r.alarmAt && r.winnerId && r.bets?.[r.winnerId] && (
+                        <div style={{ padding: "10px 16px", background: "rgba(251,191,36,.05)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span style={{ fontSize: "20px" }}>🏆</span>
+                          <div>
+                            <span style={{ fontWeight: 800, fontSize: "14px", color: "var(--yellow)" }}>{r.bets[r.winnerId].name}</span>
+                            <span style={{ color: "var(--dim)", fontSize: "11px", marginRight: "8px" }}>
+                              הפרש: <span style={{ color: "var(--mint)", fontWeight: 700 }}>{fmtDiff(Math.abs((r.bets[r.winnerId].ts || 0) - r.alarmAt))}</span>
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* All bets */}
+                      {sorted.map(([uid, bet], bi) => {
+                        const bdg = getBadge(allUsers[uid]?.totalWins || 0)
+                        const isWinner = uid === r.winnerId
+                        const diff = r.alarmAt ? Math.abs(bet.ts - r.alarmAt) : null
+                        return (
+                          <div key={uid} className={`prow${uid === user.id ? " me" : ""}`} style={{ background: isWinner ? "rgba(251,191,36,.06)" : "transparent" }}>
+                            <div style={{ textAlign: "center", fontSize: "16px", minWidth: "24px" }}>
+                              {isWinner ? "🏆" : bi === 0 && r.alarmAt ? "🥈" : bdg.emoji}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 800, fontSize: "13px", color: isWinner ? "var(--yellow)" : uid === user.id ? "var(--sky)" : "var(--text)" }}>
+                                {bet.name}{uid === user.id ? " (אני)" : ""}
+                              </div>
+                              <div style={{ color: "var(--dim)", fontSize: "11px" }}>{fmtDate(bet.ts)}</div>
+                            </div>
+                            {diff !== null && (
+                              <div style={{ fontSize: "12px", fontWeight: 700, color: isWinner ? "var(--mint)" : "var(--dim)" }}>
+                                {fmtDiff(diff)}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+
+                      {betsArr.length === 0 && (
+                        <div style={{ padding: "12px 16px", color: "var(--dim)", fontSize: "12px", textAlign: "center" }}>אין הימורים בסיבוב זה</div>
+                      )}
                     </div>
                   )
                 })}
