@@ -12,15 +12,15 @@ jobs:
       - name: Fetch Oref and write to Firebase
         run: |
           RESPONSE=$(curl -s \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" \
             -H "Referer: https://www.oref.org.il/" \
             -H "X-Requested-With: XMLHttpRequest" \
             -H "Accept: application/json" \
             "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json")
 
-          echo "Oref response: $RESPONSE"
+          echo "Oref response length: ${#RESPONSE}"
 
-          # Parse latest Givataim rocket alert timestamp
+          # Parse latest Givataim rocket alert — convert Israel time (Asia/Jerusalem) to UTC ms
           TS=$(echo "$RESPONSE" | python3 -c "
           import sys, json
           try:
@@ -29,12 +29,15 @@ jobs:
               if alerts:
                   alerts.sort(key=lambda x: x.get('alertDate',''), reverse=True)
                   from datetime import datetime
-                  dt = datetime.strptime(alerts[0]['alertDate'], '%Y-%m-%d %H:%M:%S')
-                  import calendar
-                  print(int(calendar.timegm(dt.timetuple())) * 1000)
+                  from zoneinfo import ZoneInfo
+                  il_tz = ZoneInfo('Asia/Jerusalem')
+                  dt = datetime.strptime(alerts[0]['alertDate'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=il_tz)
+                  print(int(dt.timestamp()) * 1000)
               else:
                   print('')
           except Exception as e:
+              import sys as _sys
+              print(f'ERROR: {e}', file=_sys.stderr)
               print('')
           ")
 
