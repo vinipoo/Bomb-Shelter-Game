@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import WinnerPopup from "./WinnerPopup.jsx"
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Cell } from "recharts"
-import { ref, get, set, remove, onValue } from "firebase/database"
+import { ref, get, set, update, remove, onValue } from "firebase/database"
 import { db } from "./firebase"
 
 /* ═══ STORAGE ═══ */
@@ -15,6 +15,9 @@ const getS = async (key) => {
 }
 const setS = async (key, val) => {
   try { if (val === null) await remove(ref(db, key)); else await set(ref(db, key), val) } catch {}
+}
+const updateS = async (key, patch) => {
+  try { await update(ref(db, key), patch) } catch {}
 }
 
 /* ═══ HELPERS ═══ */
@@ -391,12 +394,15 @@ export default function ShelterBet() {
     const rawR = await getS("sb_rounds")
     const allR = Array.isArray(rawR) ? rawR : rawR && typeof rawR === "object" ? Object.values(rawR) : []
     allR.push(done)
-    const us = await getS("sb_users")
-    if (!us || Object.keys(us).length === 0) return setAdminMsg("שגיאה: לא ניתן לקרוא משתמשים מ-Firebase — נסה שוב")
-    if (winner && us[winner]) us[winner].totalWins = (us[winner].totalWins || 0) + 1
+    // Only update winner's totalWins — never overwrite the full users object
+    if (winner) {
+      const currentWins = (await getS(`sb_users/${winner}/totalWins`)) || 0
+      await updateS(`sb_users/${winner}`, { totalWins: currentWins + 1 })
+    }
     // Auto-open next round immediately
     const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 }
-    await Promise.all([setS("sb_rounds", allR), setS("sb_users", us), setS("sb_current", nr), setS("sb_last_alarm", alarmTs)])
+    await Promise.all([setS("sb_rounds", allR), setS("sb_current", nr), setS("sb_last_alarm", alarmTs)])
+    const us = await getS("sb_users") || {}
     setRounds(allR); setUsers(us); setRound(nr); setAlarmDt("")
     const wName = us[winner]?.displayName || winner || "—"
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)

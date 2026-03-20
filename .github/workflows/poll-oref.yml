@@ -42,6 +42,16 @@ jobs:
             except Exception as e:
               print(f"Firebase PUT error ({path}): {e}"); return None
 
+          def fb_patch(path, data):
+            try:
+              body = json.dumps(data).encode("utf-8")
+              req  = urllib.request.Request(f"{FIREBASE_URL}/{path}.json?auth={SECRET}",
+                       data=body, method="PATCH", headers={"Content-Type": "application/json"})
+              with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read().decode("utf-8"))
+            except Exception as e:
+              print(f"Firebase PATCH error ({path}): {e}"); return None
+
           def oref_fetch(url):
             try:
               req = urllib.request.Request(url, headers=OREF_HEADERS)
@@ -118,10 +128,10 @@ jobs:
           if isinstance(all_rounds, dict): all_rounds = list(all_rounds.values())
           all_rounds.append(done_round)
 
-          # ── 6. Update user wins ────────────────────────────────────────────
-          users = fb_get("sb_users") or {}
-          if winner and winner in users:
-            users[winner]["totalWins"] = (users[winner].get("totalWins") or 0) + 1
+          # ── 6. Update winner's totalWins only (never overwrite all users) ──
+          if winner:
+            current_wins = fb_get(f"sb_users/{winner}/totalWins") or 0
+            fb_patch(f"sb_users/{winner}", {"totalWins": current_wins + 1})
 
           # ── 7. Open new round ──────────────────────────────────────────────
           new_round = {
@@ -131,7 +141,6 @@ jobs:
 
           # ── 8. Write everything to Firebase ───────────────────────────────
           fb_put("sb_rounds",        all_rounds)
-          fb_put("sb_users",         users)
           fb_put("sb_current",       new_round)
           fb_put("sb_last_alarm",    alarm_ts)
           fb_put("sb_pending_alarm", None)
@@ -141,6 +150,6 @@ jobs:
               "betTs": bets[winner].get("ts"), "processedAt": now
             })
 
-          winner_name = users.get(winner, {}).get("displayName", winner) if winner else "—"
+          winner_name = (fb_get(f"sb_users/{winner}/displayName") or winner) if winner else "—"
           print(f"Done! Winner: {winner_name} (±{round(min_diff/1000)}s). New round opened: r{now}")
           PYEOF
