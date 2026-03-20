@@ -277,12 +277,11 @@ export default function ShelterBet() {
   const [editRoundIdx, setEditRoundIdx] = useState(null); const [editRoundDt, setEditRoundDt] = useState("")
   const [adminEntryMode, setAdminEntryMode] = useState(false); const [adminEntryPw, setAdminEntryPw] = useState(""); const [adminEntryErr, setAdminEntryErr] = useState("")
   const [detectedAlarm, setDetectedAlarm] = useState(null)
-  const [orefStatus, setOrefStatus] = useState("idle")  // idle | checking | found | error
   const [lastAlarm, setLastAlarm] = useState(null)
   const [orefPoll, setOrefPoll] = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
   const [lastWinner, setLastWinner] = useState(null)
-  const processingAlarm = useRef(false)
+
   const userRef = useRef(null)
   const shownPopupRef = useRef(new Set())
 
@@ -366,21 +365,6 @@ export default function ShelterBet() {
     setAdminMsg("✅ סיבוב חדש נפתח! שכנים יכולים להמר"); setTimeout(() => setAdminMsg(""), 5000)
   }
 
-  /* ─── oref auto-detect ─────────────────────────────── */
-  const OREF_CITY = "גבעתיים"
-  const OREF_CURRENT_DIRECT  = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
-  const VERCEL_PROXY = "https://bomb-shelter-game.vercel.app/api/oref"
-  const OREF_CURRENT = `${VERCEL_PROXY}?type=current`
-  // Try direct URL first (oref.org.il allows browser requests), fall back to proxy
-  const fetchOref = async (directUrl, proxyUrl) => {
-    for (const url of [directUrl, proxyUrl]) {
-      try {
-        const res = await fetch(url, { cache: "no-store" })
-        if (res.ok) return res
-      } catch { }
-    }
-    return null
-  }
 
   const recordAlarmAt = useCallback(async (alarmTs) => {
     const cr = await getS("sb_current")
@@ -407,48 +391,12 @@ export default function ShelterBet() {
     const wName = us[winner]?.displayName || winner || "—"
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
     setWinAnim(true); setTimeout(() => setWinAnim(false), 2500)
-    setDetectedAlarm(null); setOrefStatus("idle")
+    setDetectedAlarm(null)
     if (winner && bets[winner]) {
       await setS("sb_last_winner", { uid: winner, alarmAt: alarmTs, betTs: bets[winner].ts, processedAt: Date.now() })
     }
   }, [])
 
-  const checkOrefAlerts = useCallback(async () => {
-    if (!round?.open || processingAlarm.current) return
-    setOrefStatus(st => st === "found" ? "found" : "checking")
-    try {
-      const curRes = await fetchOref(OREF_CURRENT_DIRECT, OREF_CURRENT)
-      if (curRes) {
-        const text = (await curRes.text()).replace(/^\uFEFF/, "")
-        if (text && text.trim() !== "" && text.trim() !== "null" && text.trim() !== "[]") {
-          const obj = JSON.parse(text)
-          const areas = Array.isArray(obj?.data) ? obj.data : []
-          if (areas.some(a => a === OREF_CITY)) {
-            processingAlarm.current = true
-            const ts = Date.now()
-            setDetectedAlarm({ ts, area: OREF_CITY, title: obj.title || "ירי רקטות וטילים", live: true })
-            setOrefStatus("found")
-            // Store in Firebase — GitHub Actions will process the round
-            await setS("sb_pending_alarm", { ts, area: OREF_CITY })
-            processingAlarm.current = false
-            return
-          }
-        }
-        setOrefStatus("checking")
-      } else {
-        setOrefStatus("error")
-      }
-    } catch { setOrefStatus("error") }
-  }, [round])
-
-  // Always-on Oref polling — runs whenever a round is open
-  useEffect(() => {
-    if (!round?.open) return
-    processingAlarm.current = false
-    checkOrefAlerts()
-    const iv = setInterval(checkOrefAlerts, 10000)
-    return () => clearInterval(iv)
-  }, [checkOrefAlerts])
 
   // Show winner popup when sb_last_winner updates (set by browser or GitHub Actions)
   useEffect(() => {
@@ -1055,14 +1003,9 @@ export default function ShelterBet() {
 
                   {/* Oref auto status */}
                   <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px", background: "rgba(0,0,0,.2)", borderRadius: "12px", marginBottom: "16px" }}>
-                    <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: orefStatus === "found" ? "var(--mint)" : orefStatus === "error" ? "var(--yellow)" : "var(--sky)", animation: "pulse 1.5s infinite" }} />
+                    <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", flexShrink: 0, background: "var(--sky)", animation: "pulse 1.5s infinite" }} />
                     <div style={{ fontSize: "13px", fontWeight: 700 }}>
-                      {orefStatus === "idle" && <span style={{ color: "var(--dim)" }}>ממתין לסיבוב פתוח...</span>}
-                      {orefStatus === "checking" && <span style={{ color: "var(--sky)" }}>🔍 בודק אזעקות כל 10 שניות — לא זוהתה אזעקה</span>}
-                      {orefStatus === "error" && <span style={{ color: "var(--yellow)" }}>⚠️ לא ניתן להתחבר ל-API — השתמש בהזנה ידנית</span>}
-                      {orefStatus === "found" && detectedAlarm && (
-                        <span style={{ color: "var(--mint)" }}>✅ אזעקה זוהתה — {fmtDate(detectedAlarm.ts)} · מעבד...</span>
-                      )}
+                      <span style={{ color: "var(--sky)" }}>🤖 GitHub Actions מנטר אזעקות כל דקה</span>
                     </div>
                   </div>
 
@@ -1241,12 +1184,7 @@ export default function ShelterBet() {
         <div style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 700 }}>
           🏠 בניין גבעתיים · {round?.open ? `סיבוב #${rounds.length + 1} פתוח 🟢` : "ממתינים לאזעקה 🔴"}
           {round?.open && (
-            <span style={{ marginRight: "8px" }}>·{" "}
-              {orefStatus === "checking" ? <span style={{ color: "var(--sky)" }}>🔍 מנטר פיקוד העורף</span>
-                : orefStatus === "found" ? <span style={{ color: "var(--mint)" }}>🚨 אזעקה זוהתה!</span>
-                : orefStatus === "error" ? <span style={{ color: "var(--yellow)" }}>⚠️ API לא זמין</span>
-                : <span>ממתין...</span>}
-            </span>
+            <span style={{ marginRight: "8px", color: "var(--sky)" }}>· 🤖 מנטר</span>
           )}
         </div>
       </div>
