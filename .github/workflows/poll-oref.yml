@@ -9,86 +9,138 @@ jobs:
   poll:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Oref and write to Firebase
+      - name: Detect alarm and process round
         run: |
-          HEADERS='-H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" -H "Referer: https://www.oref.org.il/" -H "X-Requested-With: XMLHttpRequest" -H "Accept: application/json"'
+          python3 << 'PYEOF'
+          import json, sys, time, urllib.request, urllib.error
 
-          # 1. Check live alerts.json first (catches active alarms in real time)
-          CURRENT=$(curl -s \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" \
-            -H "Referer: https://www.oref.org.il/" \
-            -H "X-Requested-With: XMLHttpRequest" \
-            -H "Accept: application/json" \
-            "https://www.oref.org.il/WarningMessages/alert/alerts.json")
+          FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
+          SECRET       = "${{ secrets.FIREBASE_DB_SECRET }}"
+          OREF_CITY    = "גבעתיים"
+          OREF_HEADERS = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://www.oref.org.il/",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+          }
 
-          echo "Current alerts response: $CURRENT"
+          def fb_get(path):
+            try:
+              req = urllib.request.Request(f"{FIREBASE_URL}/{path}.json?auth={SECRET}")
+              with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read().decode("utf-8"))
+            except Exception as e:
+              print(f"Firebase GET error ({path}): {e}"); return None
 
-          IS_CURRENT=$(echo "$CURRENT" | python3 -c "
-          import sys, json
-          try:
-              text = sys.stdin.read().strip()
-              if not text or text in ('null', '[]', ''):
-                  print('no')
-              else:
-                  obj = json.loads(text)
-                  areas = obj.get('data', []) if isinstance(obj, dict) else []
-                  print('yes' if 'גבעתיים' in areas else 'no')
-          except Exception as e:
-              print('no')
-          ")
+          def fb_put(path, data):
+            try:
+              body = json.dumps(data).encode("utf-8")
+              req  = urllib.request.Request(f"{FIREBASE_URL}/{path}.json?auth={SECRET}",
+                       data=body, method="PUT", headers={"Content-Type": "application/json"})
+              with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read().decode("utf-8"))
+            except Exception as e:
+              print(f"Firebase PUT error ({path}): {e}"); return None
 
-          echo "Givataim in current alerts: $IS_CURRENT"
+          def oref_fetch(url):
+            try:
+              req = urllib.request.Request(url, headers=OREF_HEADERS)
+              with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read().decode("utf-8").lstrip("\ufeff")
+            except Exception as e:
+              print(f"Oref fetch error: {e}"); return None
 
-          if [ "$IS_CURRENT" = "yes" ]; then
-            # Use current time as the alarm timestamp (ms)
-            TS=$(date +%s%3N)
-            echo "LIVE alarm detected! ts=$TS"
-            curl -s -X PUT \
-              -H "Content-Type: application/json" \
-              -d "$TS" \
-              "https://shelter-bet-default-rtdb.firebaseio.com/sb_oref_poll.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
-            echo "Written live alarm to Firebase: $TS"
-            exit 0
-          fi
+          # ── 1. Check live alerts.json ──────────────────────────────────────
+          alarm_ts = None
+          text = oref_fetch("https://www.oref.org.il/WarningMessages/alert/alerts.json")
+          if text and text.strip() not in ("", "null", "[]"):
+            try:
+              obj   = json.loads(text)
+              areas = obj.get("data", []) if isinstance(obj, dict) else []
+              if OREF_CITY in areas:
+                alarm_ts = int(time.time() * 1000)
+                print(f"LIVE alarm in {OREF_CITY}! ts={alarm_ts}")
+                fb_put("sb_pending_alarm", {"ts": alarm_ts, "area": OREF_CITY})
+            except Exception as e:
+              print(f"Parse error: {e}")
 
-          # 2. Fall back to history (catches alarms that ended since last run)
-          HISTORY=$(curl -s \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" \
-            -H "Referer: https://www.oref.org.il/" \
-            -H "X-Requested-With: XMLHttpRequest" \
-            -H "Accept: application/json" \
-            "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json")
+          # ── 2. Check sb_pending_alarm stored by browser ────────────────────
+          pending = fb_get("sb_pending_alarm")
+          if pending and isinstance(pending, dict):
+            pending_ts = pending.get("ts", 0)
+            if alarm_ts is None or pending_ts > alarm_ts:
+              alarm_ts = pending_ts
+              print(f"Using browser-stored alarm ts={alarm_ts}")
 
-          echo "History response length: ${#HISTORY}"
+          if alarm_ts is None:
+            print(f"No {OREF_CITY} alarm found"); sys.exit(0)
 
-          TS=$(echo "$HISTORY" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              alerts = [a for a in data if a.get('data') == 'גבעתיים' and a.get('category') == 1]
-              if alerts:
-                  alerts.sort(key=lambda x: x.get('alertDate',''), reverse=True)
-                  from datetime import datetime
-                  from zoneinfo import ZoneInfo
-                  il_tz = ZoneInfo('Asia/Jerusalem')
-                  dt = datetime.strptime(alerts[0]['alertDate'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=il_tz)
-                  print(int(dt.timestamp()) * 1000)
-              else:
-                  print('')
-          except Exception as e:
-              import sys as _sys
-              print(f'ERROR: {e}', file=_sys.stderr)
-              print('')
-          ")
+          # ── 3. Get current round ───────────────────────────────────────────
+          current = fb_get("sb_current")
+          if not current:
+            print("No current round in Firebase")
+            fb_put("sb_last_alarm", alarm_ts)
+            fb_put("sb_pending_alarm", None)
+            sys.exit(0)
 
-          echo "Latest Givataim history alarm ts: $TS"
+          if not current.get("open"):
+            print("Round already closed — skipping")
+            fb_put("sb_pending_alarm", None)
+            sys.exit(0)
 
-          if [ -n "$TS" ]; then
-            curl -s -X PUT \
-              -H "Content-Type: application/json" \
-              -d "$TS" \
-              "https://shelter-bet-default-rtdb.firebaseio.com/sb_oref_poll.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
-            echo "Written history alarm to Firebase: $TS"
-          else
-            echo "No Givataim alerts found in history either"
-          fi
+          round_created = current.get("createdAt", 0)
+          if alarm_ts <= round_created:
+            print(f"Alarm ts {alarm_ts} <= round start {round_created} — skipping")
+            fb_put("sb_pending_alarm", None)
+            sys.exit(0)
+
+          # Guard: don't process the same alarm twice
+          last_alarm = fb_get("sb_last_alarm") or 0
+          if alarm_ts == last_alarm:
+            print("Alarm already processed — skipping")
+            fb_put("sb_pending_alarm", None)
+            sys.exit(0)
+
+          # ── 4. Find winner ─────────────────────────────────────────────────
+          bets   = current.get("bets") or {}
+          winner, min_diff = None, float("inf")
+          for uid, bet in bets.items():
+            diff = abs((bet.get("ts") or 0) - alarm_ts)
+            if diff < min_diff:
+              min_diff, winner = diff, uid
+          print(f"Winner: {winner}, diff: {min_diff}ms")
+
+          # ── 5. Close round ─────────────────────────────────────────────────
+          now = int(time.time() * 1000)
+          done_round = {**current, "open": False, "alarmAt": alarm_ts, "winnerId": winner, "completedAt": now}
+
+          all_rounds = fb_get("sb_rounds") or []
+          if isinstance(all_rounds, dict): all_rounds = list(all_rounds.values())
+          all_rounds.append(done_round)
+
+          # ── 6. Update user wins ────────────────────────────────────────────
+          users = fb_get("sb_users") or {}
+          if winner and winner in users:
+            users[winner]["totalWins"] = (users[winner].get("totalWins") or 0) + 1
+
+          # ── 7. Open new round ──────────────────────────────────────────────
+          new_round = {
+            "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
+            "openedAfterAlarm": True, "bettingDeadline": now + 3600000
+          }
+
+          # ── 8. Write everything to Firebase ───────────────────────────────
+          fb_put("sb_rounds",        all_rounds)
+          fb_put("sb_users",         users)
+          fb_put("sb_current",       new_round)
+          fb_put("sb_last_alarm",    alarm_ts)
+          fb_put("sb_pending_alarm", None)
+          if winner and winner in bets:
+            fb_put("sb_last_winner", {
+              "uid": winner, "alarmAt": alarm_ts,
+              "betTs": bets[winner].get("ts"), "processedAt": now
+            })
+
+          winner_name = users.get(winner, {}).get("displayName", winner) if winner else "—"
+          print(f"Done! Winner: {winner_name} (±{round(min_diff/1000)}s). New round opened: r{now}")
+          PYEOF

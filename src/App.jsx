@@ -278,8 +278,10 @@ export default function ShelterBet() {
   const [lastAlarm, setLastAlarm] = useState(null)
   const [orefPoll, setOrefPoll] = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
+  const [lastWinner, setLastWinner] = useState(null)
   const processingAlarm = useRef(false)
   const userRef = useRef(null)
+  const shownPopupRef = useRef(new Set())
 
   useEffect(() => {
     const session = getSession()
@@ -301,10 +303,10 @@ export default function ShelterBet() {
     const unsubRounds = onValue(ref(db, "sb_rounds"), (snap) => setRounds(snap.val() || []))
     const unsubCurrent = onValue(ref(db, "sb_current"), (snap) => { setRound(snap.val() || null); setRoundLoaded(true) })
     const unsubLastAlarm = onValue(ref(db, "sb_last_alarm"), (snap) => setLastAlarm(snap.val() || null))
-    const unsubOrefPoll = onValue(ref(db, "sb_oref_poll"), (snap) => setOrefPoll(snap.val() || null))
+    const unsubLastWinner = onValue(ref(db, "sb_last_winner"), (snap) => setLastWinner(snap.val() || null))
     // Fallback if Firebase is slow
     const t = setTimeout(() => { if (!initialized) { setLoading(false); initialized = true } }, 5000)
-    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); unsubOrefPoll(); clearTimeout(t) }
+    return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); unsubLastWinner(); clearTimeout(t) }
   }, [])
 
   // Auto-open a round if none exists — only after Firebase confirms sb_current is empty
@@ -363,11 +365,8 @@ export default function ShelterBet() {
 
   /* ─── oref auto-detect ─────────────────────────────── */
   const OREF_CITY = "גבעתיים"
-  const OREF_ROCKET_CATEGORY = 1
   const OREF_CURRENT_DIRECT  = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
-  const OREF_HISTORY_DIRECT  = "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json"
   const VERCEL_PROXY = "https://bomb-shelter-game.vercel.app/api/oref"
-  const OREF_HISTORY = `${VERCEL_PROXY}?type=history`
   const OREF_CURRENT = `${VERCEL_PROXY}?type=current`
   // Try direct URL first (oref.org.il allows browser requests), fall back to proxy
   const fetchOref = async (directUrl, proxyUrl) => {
@@ -400,21 +399,15 @@ export default function ShelterBet() {
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
     setWinAnim(true); setTimeout(() => setWinAnim(false), 2500)
     setDetectedAlarm(null); setOrefStatus("idle")
-    if (winner && us[winner] && bets[winner] && winner === userRef.current?.id) {
-      setWinnerPopup({
-        winner: { name: us[winner].displayName || winner, badge: getBadge(us[winner].totalWins), totalWins: us[winner].totalWins },
-        alarmAt: alarmTs,
-        betTs: bets[winner].ts,
-      })
+    if (winner && bets[winner]) {
+      await setS("sb_last_winner", { uid: winner, alarmAt: alarmTs, betTs: bets[winner].ts, processedAt: Date.now() })
     }
   }, [])
 
   const checkOrefAlerts = useCallback(async () => {
     if (!round?.open || processingAlarm.current) return
     setOrefStatus(st => st === "found" ? "found" : "checking")
-    const roundStart = round.createdAt || 0
     try {
-      // 1. Try current live alert
       const curRes = await fetchOref(OREF_CURRENT_DIRECT, OREF_CURRENT)
       if (curRes) {
         const text = (await curRes.text()).replace(/^\uFEFF/, "")
@@ -426,45 +419,18 @@ export default function ShelterBet() {
             const ts = Date.now()
             setDetectedAlarm({ ts, area: OREF_CITY, title: obj.title || "ירי רקטות וטילים", live: true })
             setOrefStatus("found")
-            await recordAlarmAt(ts)
+            // Store in Firebase — GitHub Actions will process the round
+            await setS("sb_pending_alarm", { ts, area: OREF_CITY })
             processingAlarm.current = false
             return
           }
         }
-      }
-    } catch { }
-    try {
-      // 2. History — filter by city AND rocket/missile category only
-      const histRes = await fetchOref(OREF_HISTORY_DIRECT, OREF_HISTORY)
-      if (histRes) {
-        const text = (await histRes.text()).replace(/^\uFEFF/, "")
-        const data = JSON.parse(text) || []
-        const givataim = data.filter(a => a.data === OREF_CITY && a.category === OREF_ROCKET_CATEGORY)
-        // Always update last alarm from history (any time, not just since round start)
-        if (givataim.length > 0) {
-          const latestAny = givataim.sort((a, b) => new Date(b.alertDate) - new Date(a.alertDate))[0]
-          const latestTs = new Date(latestAny.alertDate.replace(" ", "T")).getTime()
-          const stored = await getS("sb_last_alarm")
-          if (!stored || latestTs > stored) await setS("sb_last_alarm", latestTs)
-        }
-        const relevant = givataim.filter(a => {
-          const ts = new Date(a.alertDate?.replace(" ", "T")).getTime()
-          return ts > roundStart
-        })
-        if (relevant.length > 0) {
-          processingAlarm.current = true
-          const latest = relevant.sort((a, b) => new Date(b.alertDate) - new Date(a.alertDate))[0]
-          const ts = new Date(latest.alertDate.replace(" ", "T")).getTime()
-          setDetectedAlarm({ ts, area: OREF_CITY, title: latest.title || "ירי רקטות וטילים" })
-          setOrefStatus("found")
-          await recordAlarmAt(ts)
-          processingAlarm.current = false
-          return
-        }
         setOrefStatus("checking")
-      } else { setOrefStatus("error") }
+      } else {
+        setOrefStatus("error")
+      }
     } catch { setOrefStatus("error") }
-  }, [round, recordAlarmAt])
+  }, [round])
 
   // Always-on Oref polling — runs whenever a round is open
   useEffect(() => {
@@ -475,15 +441,21 @@ export default function ShelterBet() {
     return () => clearInterval(iv)
   }, [checkOrefAlerts])
 
-  // GitHub Actions poll result — triggers round close when new Givataim alarm detected
+  // Show winner popup when sb_last_winner updates (set by browser or GitHub Actions)
   useEffect(() => {
-    if (!orefPoll || !round?.open || processingAlarm.current) return
-    if (orefPoll > (round.createdAt || 0)) {
-      processingAlarm.current = true
-      setOrefStatus("found")
-      recordAlarmAt(orefPoll).then(() => { processingAlarm.current = false })
-    }
-  }, [orefPoll, round, recordAlarmAt])
+    if (!lastWinner?.uid || !lastWinner?.alarmAt) return
+    const key = `${lastWinner.alarmAt}-${lastWinner.uid}`
+    if (shownPopupRef.current.has(key)) return
+    if (lastWinner.uid !== userRef.current?.id) return
+    const userData = allUsers[lastWinner.uid]
+    if (!userData || !lastWinner.betTs) return
+    shownPopupRef.current.add(key)
+    setWinnerPopup({
+      winner: { name: userData.displayName || lastWinner.uid, badge: getBadge(userData.totalWins || 0), totalWins: userData.totalWins || 0 },
+      alarmAt: lastWinner.alarmAt,
+      betTs: lastWinner.betTs,
+    })
+  }, [lastWinner, allUsers])
 
   // Countdown timer — ticks every second while a round with a deadline is open
   useEffect(() => {
