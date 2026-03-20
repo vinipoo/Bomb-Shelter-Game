@@ -1,0 +1,66 @@
+name: Restore Users
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore sb_users from round history
+        run: |
+          python3 << 'PYEOF'
+          import json, urllib.request
+
+          FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
+          SECRET = "${{ secrets.FIREBASE_DB_SECRET }}"
+
+          def fb_put(path, data):
+            body = json.dumps(data).encode("utf-8")
+            req  = urllib.request.Request(f"{FIREBASE_URL}/{path}.json?auth={SECRET}",
+                     data=body, method="PUT", headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+              return json.loads(r.read().decode("utf-8"))
+
+          users = {
+            "__admin__": {
+              "displayName": "מנהל",
+              "isAdmin": True,
+              "joinedAt": 1774036485789,
+              "totalWins": 0
+            },
+            "אורי": {
+              "displayName": "אורי",
+              "joinedAt": 1773948337808,
+              "totalWins": 0
+            },
+            "אילן": {
+              "displayName": "אילן",
+              "joinedAt": 1773949754574,
+              "totalWins": 3
+            },
+            "דנה_השכנה_הטובה_ביותר": {
+              "displayName": "דנה השכנה הטובה ביותר",
+              "joinedAt": 1773937559916,
+              "totalWins": 0
+            },
+            "יוסי": {
+              "displayName": "יוסי",
+              "joinedAt": 1773937847967,
+              "totalWins": 0
+            },
+            "יפית": {
+              "displayName": "יפית",
+              "joinedAt": 1773938638648,
+              "totalWins": 0
+            },
+            "מיכל": {
+              "displayName": "מיכל",
+              "joinedAt": 1773941442062,
+              "totalWins": 0
+            }
+          }
+
+          fb_put("sb_users", users)
+          print("Done! Restored users:", list(users.keys()))
+          PYEOF
