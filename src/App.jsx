@@ -388,8 +388,11 @@ export default function ShelterBet() {
       const d = Math.abs(bet.ts - alarmTs); if (d < minDiff) { minDiff = d; winner = uid }
     }
     const done = { ...cr, open: false, alarmAt: alarmTs, winnerId: winner, completedAt: Date.now() }
-    const allR = (await getS("sb_rounds")) || []; allR.push(done)
-    const us = (await getS("sb_users")) || {}
+    const rawR = await getS("sb_rounds")
+    const allR = Array.isArray(rawR) ? rawR : rawR && typeof rawR === "object" ? Object.values(rawR) : []
+    allR.push(done)
+    const us = await getS("sb_users")
+    if (!us || Object.keys(us).length === 0) return setAdminMsg("שגיאה: לא ניתן לקרוא משתמשים מ-Firebase — נסה שוב")
     if (winner && us[winner]) us[winner].totalWins = (us[winner].totalWins || 0) + 1
     // Auto-open next round immediately
     const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 }
