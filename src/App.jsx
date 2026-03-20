@@ -39,7 +39,7 @@ const monthStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDa
 
 const BADGES = [
   { min: 0, label: "חדש במקלט", emoji: "🧸", color: "#94a3b8" },
-  { min: 1, label: "בן שכנה", emoji: "☕", color: "#84cc16" },
+  { min: 1, label: "שכן/ה", emoji: "☕", color: "#84cc16" },
   { min: 3, label: "מומחה מקלט", emoji: "🎯", color: "#22d3ee" },
   { min: 6, label: "ניחוש אלוף", emoji: "🔮", color: "#a78bfa" },
   { min: 10, label: "נביא גבעתיים", emoji: "⭐", color: "#f59e0b" },
@@ -279,6 +279,7 @@ export default function ShelterBet() {
   const [orefPoll, setOrefPoll] = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
   const processingAlarm = useRef(false)
+  const userRef = useRef(null)
 
   useEffect(() => {
     const session = getSession()
@@ -311,6 +312,8 @@ export default function ShelterBet() {
     if (!roundLoaded || round !== null) return
     set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 })
   }, [roundLoaded, round])
+
+  useEffect(() => { userRef.current = user }, [user])
 
   const doLogin = async () => {
     const uid = uname.trim().toLowerCase().replace(/\s+/g, "_")
@@ -392,7 +395,7 @@ export default function ShelterBet() {
     setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
     setWinAnim(true); setTimeout(() => setWinAnim(false), 2500)
     setDetectedAlarm(null); setOrefStatus("idle")
-    if (winner && us[winner] && bets[winner]) {
+    if (winner && us[winner] && bets[winner] && winner === userRef.current?.id) {
       setWinnerPopup({
         winner: { name: us[winner].displayName || winner, badge: getBadge(us[winner].totalWins), totalWins: us[winner].totalWins },
         alarmAt: alarmTs,
