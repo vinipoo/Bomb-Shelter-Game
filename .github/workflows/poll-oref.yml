@@ -11,17 +11,57 @@ jobs:
     steps:
       - name: Fetch Oref and write to Firebase
         run: |
-          RESPONSE=$(curl -s \
+          HEADERS='-H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" -H "Referer: https://www.oref.org.il/" -H "X-Requested-With: XMLHttpRequest" -H "Accept: application/json"'
+
+          # 1. Check live alerts.json first (catches active alarms in real time)
+          CURRENT=$(curl -s \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" \
+            -H "Referer: https://www.oref.org.il/" \
+            -H "X-Requested-With: XMLHttpRequest" \
+            -H "Accept: application/json" \
+            "https://www.oref.org.il/WarningMessages/alert/alerts.json")
+
+          echo "Current alerts response: $CURRENT"
+
+          IS_CURRENT=$(echo "$CURRENT" | python3 -c "
+          import sys, json
+          try:
+              text = sys.stdin.read().strip()
+              if not text or text in ('null', '[]', ''):
+                  print('no')
+              else:
+                  obj = json.loads(text)
+                  areas = obj.get('data', []) if isinstance(obj, dict) else []
+                  print('yes' if 'גבעתיים' in areas else 'no')
+          except Exception as e:
+              print('no')
+          ")
+
+          echo "Givataim in current alerts: $IS_CURRENT"
+
+          if [ "$IS_CURRENT" = "yes" ]; then
+            # Use current time as the alarm timestamp (ms)
+            TS=$(date +%s%3N)
+            echo "LIVE alarm detected! ts=$TS"
+            curl -s -X PUT \
+              -H "Content-Type: application/json" \
+              -d "$TS" \
+              "https://shelter-bet-default-rtdb.firebaseio.com/sb_oref_poll.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
+            echo "Written live alarm to Firebase: $TS"
+            exit 0
+          fi
+
+          # 2. Fall back to history (catches alarms that ended since last run)
+          HISTORY=$(curl -s \
             -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36" \
             -H "Referer: https://www.oref.org.il/" \
             -H "X-Requested-With: XMLHttpRequest" \
             -H "Accept: application/json" \
             "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json")
 
-          echo "Oref response length: ${#RESPONSE}"
+          echo "History response length: ${#HISTORY}"
 
-          # Parse latest Givataim rocket alert — convert Israel time (Asia/Jerusalem) to UTC ms
-          TS=$(echo "$RESPONSE" | python3 -c "
+          TS=$(echo "$HISTORY" | python3 -c "
           import sys, json
           try:
               data = json.load(sys.stdin)
@@ -41,14 +81,14 @@ jobs:
               print('')
           ")
 
-          echo "Latest Givataim alarm ts: $TS"
+          echo "Latest Givataim history alarm ts: $TS"
 
           if [ -n "$TS" ]; then
             curl -s -X PUT \
               -H "Content-Type: application/json" \
               -d "$TS" \
               "https://shelter-bet-default-rtdb.firebaseio.com/sb_oref_poll.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
-            echo "Written to Firebase: $TS"
+            echo "Written history alarm to Firebase: $TS"
           else
-            echo "No Givataim alerts found"
+            echo "No Givataim alerts found in history either"
           fi
