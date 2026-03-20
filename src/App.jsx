@@ -364,14 +364,19 @@ export default function ShelterBet() {
   /* ─── oref auto-detect ─────────────────────────────── */
   const OREF_CITY = "גבעתיים"
   const OREF_ROCKET_CATEGORY = 1
+  const OREF_CURRENT_DIRECT  = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
+  const OREF_HISTORY_DIRECT  = "https://www.oref.org.il/warningMessages/alert/History/AlertsHistory.json"
   const VERCEL_PROXY = "https://bomb-shelter-game.vercel.app/api/oref"
   const OREF_HISTORY = `${VERCEL_PROXY}?type=history`
   const OREF_CURRENT = `${VERCEL_PROXY}?type=current`
-  const fetchOref = async (url) => {
-    try {
-      const res = await fetch(url, { cache: "no-store" })
-      if (res.ok) return res
-    } catch { }
+  // Try direct URL first (oref.org.il allows browser requests), fall back to proxy
+  const fetchOref = async (directUrl, proxyUrl) => {
+    for (const url of [directUrl, proxyUrl]) {
+      try {
+        const res = await fetch(url, { cache: "no-store" })
+        if (res.ok) return res
+      } catch { }
+    }
     return null
   }
 
@@ -410,8 +415,8 @@ export default function ShelterBet() {
     const roundStart = round.createdAt || 0
     try {
       // 1. Try current live alert
-      const curRes = await fetchOref(OREF_CURRENT)
-      if (curRes.ok) {
+      const curRes = await fetchOref(OREF_CURRENT_DIRECT, OREF_CURRENT)
+      if (curRes) {
         const text = (await curRes.text()).replace(/^\uFEFF/, "")
         if (text && text.trim() !== "" && text.trim() !== "null" && text.trim() !== "[]") {
           const obj = JSON.parse(text)
@@ -430,8 +435,8 @@ export default function ShelterBet() {
     } catch { }
     try {
       // 2. History — filter by city AND rocket/missile category only
-      const histRes = await fetchOref(OREF_HISTORY)
-      if (histRes.ok) {
+      const histRes = await fetchOref(OREF_HISTORY_DIRECT, OREF_HISTORY)
+      if (histRes) {
         const text = (await histRes.text()).replace(/^\uFEFF/, "")
         const data = JSON.parse(text) || []
         const givataim = data.filter(a => a.data === OREF_CITY && a.category === OREF_ROCKET_CATEGORY)
