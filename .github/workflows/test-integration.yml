@@ -7,10 +7,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - name: Install cloudscraper
+        run: pip install cloudscraper -q
+
       - name: Fetch oref alert and write to Firebase
         run: |
           python3 << 'PYEOF'
-          import json, time, requests
+          import json, time, cloudscraper
 
           FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
           SECRET       = "${{ secrets.FIREBASE_DB_SECRET }}"
@@ -18,25 +21,19 @@ jobs:
 
           now = int(time.time() * 1000)
 
-          # Step 1 — Fetch alerts.json using a session with cookies
-          print("Fetching alerts.json...")
+          # Step 1 — Fetch alerts.json bypassing Cloudflare protection
+          print("Fetching alerts.json via cloudscraper...")
           oref_status = "error"
           oref_raw    = None
           try:
-            session = requests.Session()
-            session.headers.update({
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-              "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+            scraper = cloudscraper.create_scraper()
+            scraper.headers.update({
               "Referer": "https://www.oref.org.il/",
               "X-Requested-With": "XMLHttpRequest",
               "Accept": "application/json, text/plain, */*",
-              "Sec-Fetch-Dest": "empty",
-              "Sec-Fetch-Mode": "cors",
-              "Sec-Fetch-Site": "same-origin",
+              "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
             })
-            # Visit main page first to pick up any session cookies
-            session.get("https://www.oref.org.il/", timeout=10)
-            r = session.get(OREF_URL, timeout=10)
+            r = scraper.get(OREF_URL, timeout=15)
             print(f"HTTP status: {r.status_code}")
             if r.status_code == 200:
               oref_raw    = r.content.decode("utf-8").lstrip("\ufeff").strip()
@@ -44,6 +41,7 @@ jobs:
               print(f"oref response: {oref_raw[:200]}")
             else:
               print(f"oref fetch FAILED: HTTP {r.status_code}")
+              print(f"Response body: {r.text[:300]}")
           except Exception as e:
             print(f"oref fetch FAILED: {e}")
 
