@@ -1,0 +1,7 @@
+name = "shelter-bet-poller"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+account_id = "44db13b7b9c41b39ada8e37ac15913fd"
+
+[triggers]
+crons = ["* * * * *"]
