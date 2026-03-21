@@ -17,6 +17,7 @@ jobs:
           FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
           SECRET       = "${{ secrets.FIREBASE_DB_SECRET }}"
           OREF_CITY    = "גבעתיים"
+          OREF_URL     = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
           OREF_HEADERS = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
             "Referer": "https://www.oref.org.il/",
@@ -52,104 +53,107 @@ jobs:
             except Exception as e:
               print(f"Firebase PATCH error ({path}): {e}"); return None
 
-          def oref_fetch(url):
+          def oref_fetch():
             try:
-              req = urllib.request.Request(url, headers=OREF_HEADERS)
-              with urllib.request.urlopen(req, timeout=10) as r:
+              req = urllib.request.Request(OREF_URL, headers=OREF_HEADERS)
+              with urllib.request.urlopen(req, timeout=5) as r:
                 return r.read().decode("utf-8").lstrip("\ufeff")
             except Exception as e:
               print(f"Oref fetch error: {e}"); return None
 
-          # ── 1. Check live alerts.json ──────────────────────────────────────
-          alarm_ts = None
-          text = oref_fetch("https://www.oref.org.il/WarningMessages/alert/alerts.json")
-          if text and text.strip() not in ("", "null", "[]"):
-            try:
-              obj   = json.loads(text)
-              areas = obj.get("data", []) if isinstance(obj, dict) else []
-              if OREF_CITY in areas:
-                alarm_ts = int(time.time() * 1000)
-                print(f"LIVE alarm in {OREF_CITY}! ts={alarm_ts}")
-                fb_put("sb_pending_alarm", {"ts": alarm_ts, "area": OREF_CITY})
-            except Exception as e:
-              print(f"Parse error: {e}")
+          def process_alarm(alarm_ts):
+            # ── Get current round ──────────────────────────────────────────
+            current = fb_get("sb_current")
+            if not current:
+              print("No current round in Firebase")
+              fb_put("sb_last_alarm", alarm_ts)
+              fb_put("sb_pending_alarm", None)
+              return
 
-          # ── 2. Check sb_pending_alarm stored by browser ────────────────────
-          pending = fb_get("sb_pending_alarm")
-          if pending and isinstance(pending, dict):
-            pending_ts = pending.get("ts", 0)
-            if alarm_ts is None or pending_ts > alarm_ts:
-              alarm_ts = pending_ts
-              print(f"Using browser-stored alarm ts={alarm_ts}")
+            if not current.get("open"):
+              print("Round already closed — skipping")
+              fb_put("sb_pending_alarm", None)
+              return
 
-          if alarm_ts is None:
-            print(f"No {OREF_CITY} alarm found"); sys.exit(0)
+            round_created = current.get("createdAt", 0)
+            if alarm_ts <= round_created:
+              print(f"Alarm ts {alarm_ts} <= round start {round_created} — skipping")
+              fb_put("sb_pending_alarm", None)
+              return
 
-          # ── 3. Get current round ───────────────────────────────────────────
-          current = fb_get("sb_current")
-          if not current:
-            print("No current round in Firebase")
-            fb_put("sb_last_alarm", alarm_ts)
+            last_alarm = fb_get("sb_last_alarm") or 0
+            if alarm_ts == last_alarm:
+              print("Alarm already processed — skipping")
+              fb_put("sb_pending_alarm", None)
+              return
+
+            # ── Find winner ────────────────────────────────────────────────
+            bets = current.get("bets") or {}
+            winner, min_diff = None, float("inf")
+            for uid, bet in bets.items():
+              diff = abs((bet.get("ts") or 0) - alarm_ts)
+              if diff < min_diff:
+                min_diff, winner = diff, uid
+            print(f"Winner: {winner}, diff: {min_diff}ms")
+
+            # ── Close round ────────────────────────────────────────────────
+            now = int(time.time() * 1000)
+            done_round = {**current, "open": False, "alarmAt": alarm_ts, "winnerId": winner, "completedAt": now}
+            all_rounds = fb_get("sb_rounds") or []
+            if isinstance(all_rounds, dict): all_rounds = list(all_rounds.values())
+            all_rounds.append(done_round)
+
+            # ── Update winner's totalWins only ─────────────────────────────
+            if winner:
+              current_wins = fb_get(f"sb_users/{winner}/totalWins") or 0
+              fb_patch(f"sb_users/{winner}", {"totalWins": current_wins + 1})
+
+            # ── Open new round ─────────────────────────────────────────────
+            new_round = {
+              "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
+              "openedAfterAlarm": True, "bettingDeadline": now + 3600000
+            }
+
+            # ── Write to Firebase ──────────────────────────────────────────
+            fb_put("sb_rounds",        all_rounds)
+            fb_put("sb_current",       new_round)
+            fb_put("sb_last_alarm",    alarm_ts)
             fb_put("sb_pending_alarm", None)
-            sys.exit(0)
+            if winner and winner in bets:
+              fb_put("sb_last_winner", {
+                "uid": winner, "alarmAt": alarm_ts,
+                "betTs": bets[winner].get("ts"), "processedAt": now
+              })
 
-          if not current.get("open"):
-            print("Round already closed — skipping")
-            fb_put("sb_pending_alarm", None)
-            sys.exit(0)
+            winner_name = (fb_get(f"sb_users/{winner}/displayName") or winner) if winner else "—"
+            print(f"Done! Winner: {winner_name} (±{round(min_diff/1000)}s). New round: r{now}")
 
-          round_created = current.get("createdAt", 0)
-          if alarm_ts <= round_created:
-            print(f"Alarm ts {alarm_ts} <= round start {round_created} — skipping")
-            fb_put("sb_pending_alarm", None)
-            sys.exit(0)
+          # ── Main loop — poll every 2 seconds for 55 seconds ───────────────
+          last_alarm_id = None
+          start = time.time()
 
-          # Guard: don't process the same alarm twice
-          last_alarm = fb_get("sb_last_alarm") or 0
-          if alarm_ts == last_alarm:
-            print("Alarm already processed — skipping")
-            fb_put("sb_pending_alarm", None)
-            sys.exit(0)
+          while time.time() - start < 55:
+            text = oref_fetch()
+            if text and text.strip() not in ("", "null", "[]"):
+              try:
+                obj   = json.loads(text)
+                areas = obj.get("data", []) if isinstance(obj, dict) else []
+                alert_id = obj.get("id", "")
+                if OREF_CITY in areas and alert_id != last_alarm_id:
+                  alarm_ts = int(time.time() * 1000)
+                  print(f"ALARM in {OREF_CITY}! id={alert_id} ts={alarm_ts}")
+                  last_alarm_id = alert_id
+                  fb_put("sb_pending_alarm", {"ts": alarm_ts, "area": OREF_CITY})
+                  process_alarm(alarm_ts)
+              except Exception as e:
+                print(f"Parse error: {e}")
+            else:
+              # Check if browser stored a pending alarm
+              pending = fb_get("sb_pending_alarm")
+              if pending and isinstance(pending, dict) and pending.get("ts"):
+                print(f"Found browser-stored alarm ts={pending['ts']}")
+                process_alarm(pending["ts"])
+            time.sleep(2)
 
-          # ── 4. Find winner ─────────────────────────────────────────────────
-          bets   = current.get("bets") or {}
-          winner, min_diff = None, float("inf")
-          for uid, bet in bets.items():
-            diff = abs((bet.get("ts") or 0) - alarm_ts)
-            if diff < min_diff:
-              min_diff, winner = diff, uid
-          print(f"Winner: {winner}, diff: {min_diff}ms")
-
-          # ── 5. Close round ─────────────────────────────────────────────────
-          now = int(time.time() * 1000)
-          done_round = {**current, "open": False, "alarmAt": alarm_ts, "winnerId": winner, "completedAt": now}
-
-          all_rounds = fb_get("sb_rounds") or []
-          if isinstance(all_rounds, dict): all_rounds = list(all_rounds.values())
-          all_rounds.append(done_round)
-
-          # ── 6. Update winner's totalWins only (never overwrite all users) ──
-          if winner:
-            current_wins = fb_get(f"sb_users/{winner}/totalWins") or 0
-            fb_patch(f"sb_users/{winner}", {"totalWins": current_wins + 1})
-
-          # ── 7. Open new round ──────────────────────────────────────────────
-          new_round = {
-            "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
-            "openedAfterAlarm": True, "bettingDeadline": now + 3600000
-          }
-
-          # ── 8. Write everything to Firebase ───────────────────────────────
-          fb_put("sb_rounds",        all_rounds)
-          fb_put("sb_current",       new_round)
-          fb_put("sb_last_alarm",    alarm_ts)
-          fb_put("sb_pending_alarm", None)
-          if winner and winner in bets:
-            fb_put("sb_last_winner", {
-              "uid": winner, "alarmAt": alarm_ts,
-              "betTs": bets[winner].get("ts"), "processedAt": now
-            })
-
-          winner_name = (fb_get(f"sb_users/{winner}/displayName") or winner) if winner else "—"
-          print(f"Done! Winner: {winner_name} (±{round(min_diff/1000)}s). New round opened: r{now}")
+          print("Loop complete.")
           PYEOF
