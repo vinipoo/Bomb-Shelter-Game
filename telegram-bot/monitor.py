@@ -111,6 +111,16 @@ async def handler(event):
     text = event.message.text or ""
     print(f"📨 [{CHANNEL}] {text[:120]}")
 
+    # One-time integration test: save first message of any type to Firebase
+    if not fb_get("sb_telegram_test"):
+        fb_put("sb_telegram_test", {
+            "ts":        int(time.time() * 1000),
+            "text":      text[:500],
+            "messageId": event.id,
+            "channel":   CHANNEL,
+        })
+        print("🧪 Integration test saved to sb_telegram_test")
+
     if OREF_CITY in text:
         alarm_ts = int(time.time() * 1000)
         print(f"🚨 ALARM in {OREF_CITY}! ts={alarm_ts}")
