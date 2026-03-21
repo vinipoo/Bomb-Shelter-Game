@@ -130,6 +130,7 @@ jobs:
 
           # ── Main loop — poll every 2 seconds for 55 seconds ───────────────
           last_alarm_id = None
+          test_alert_done = bool(fb_get("sb_test_alert"))
           start = time.time()
 
           while time.time() - start < 55:
@@ -139,6 +140,18 @@ jobs:
                 obj   = json.loads(text)
                 areas = obj.get("data", []) if isinstance(obj, dict) else []
                 alert_id = obj.get("id", "")
+
+                # ── One-time test: save first alert of any type ────────────
+                if areas and not test_alert_done:
+                  fb_put("sb_test_alert", {
+                    "ts":    int(time.time() * 1000),
+                    "areas": areas,
+                    "title": obj.get("title", ""),
+                    "id":    alert_id,
+                  })
+                  test_alert_done = True
+                  print(f"Test alert saved: {obj.get('title','')} — {areas}")
+
                 if OREF_CITY in areas and alert_id != last_alarm_id:
                   alarm_ts = int(time.time() * 1000)
                   print(f"ALARM in {OREF_CITY}! id={alert_id} ts={alarm_ts}")

@@ -14,6 +14,8 @@
     .red    { background: #2b0d0d; border: 1px solid #7a2a2a; color: #ca5d5d; }
     .blue   { background: #0d1a2b; border: 1px solid #2a4a7a; color: #5d8aca; }
     .gray   { background: #1a1a1a; border: 1px solid #333; color: #888; }
+    .orange { background: #2b1800; border: 2px solid #f5a623; color: #f5a623; }
+    #card-test { display: none; }
     #log { margin-top: 20px; }
     .log-entry { padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; background: #1a1a1a; border: 1px solid #333; }
     .log-time { color: #666; font-size: 11px; }
@@ -22,6 +24,11 @@
 <body>
   <h1>🔍 מעקב אזעקות — בדיקה</h1>
   <p class="subtitle">בודק Firebase כל 3 שניות — מציג כל שינוי</p>
+
+  <div class="card orange" id="card-test">
+    <div class="card-title">🧪 בדיקה חד-פעמית — אזעקה ראשונה שזוהתה</div>
+    <div class="card-value" id="val-test">—</div>
+  </div>
 
   <div class="card gray" id="card-live">
     <div class="card-title">alerts.json — מה GitHub Actions רואה כרגע</div>
@@ -84,12 +91,24 @@
     }
 
     async function check() {
-      const [pending, lastAlarm, lastWinner, current] = await Promise.all([
+      const [pending, lastAlarm, lastWinner, current, testAlert] = await Promise.all([
         fbGet("sb_pending_alarm"),
         fbGet("sb_last_alarm"),
         fbGet("sb_last_winner"),
-        fbGet("sb_current")
+        fbGet("sb_current"),
+        fbGet("sb_test_alert")
       ])
+
+      // One-time test alert
+      if (testAlert?.ts) {
+        const card = document.getElementById("card-test")
+        card.style.display = "block"
+        const areas = Array.isArray(testAlert.areas) ? testAlert.areas.join(" · ") : "—"
+        document.getElementById("val-test").textContent =
+          `🚨 ${testAlert.title || "אזעקה"} | ${areas} | ${fmt(testAlert.ts)}`
+        if (!prev.testAlert) addLog(`✅ בדיקה הצליחה! אזעקה זוהתה: ${testAlert.title || ""} — ${areas}`)
+        prev.testAlert = testAlert.ts
+      }
 
       // Live fetch via Vite proxy
       try {
