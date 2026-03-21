@@ -1,0 +1,72 @@
+name: Integration Test — GitHub → oref → Firebase
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch oref alert and write to Firebase
+        run: |
+          python3 << 'PYEOF'
+          import json, time, urllib.request
+
+          FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
+          SECRET       = "${{ secrets.FIREBASE_DB_SECRET }}"
+          OREF_URL     = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
+          OREF_HEADERS = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://www.oref.org.il/",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json",
+          }
+
+          now = int(time.time() * 1000)
+
+          # Step 1 — Fetch alerts.json
+          print("Fetching alerts.json...")
+          oref_status = "error"
+          oref_raw    = None
+          try:
+            req = urllib.request.Request(OREF_URL, headers=OREF_HEADERS)
+            with urllib.request.urlopen(req, timeout=10) as r:
+              oref_raw    = r.read().decode("utf-8").lstrip("\ufeff").strip()
+              oref_status = "ok"
+              print(f"oref response: {oref_raw[:200]}")
+          except Exception as e:
+            print(f"oref fetch FAILED: {e}")
+
+          # Step 2 — Parse response
+          alert_data = None
+          if oref_raw and oref_raw not in ("", "null", "[]"):
+            try:
+              alert_data = json.loads(oref_raw)
+              print(f"Active alert found: {alert_data.get('title','')} — {alert_data.get('data',[])}")
+            except Exception as e:
+              print(f"Parse error: {e}")
+          else:
+            print("No active alert at time of test (normal)")
+
+          # Step 3 — Write result to Firebase
+          result = {
+            "testedAt":   now,
+            "orefStatus": oref_status,
+            "alertData":  alert_data,
+            "rawSample":  (oref_raw or "")[:500],
+          }
+          body = json.dumps(result).encode("utf-8")
+          req  = urllib.request.Request(
+            f"{FIREBASE_URL}/sb_integration_test.json?auth={SECRET}",
+            data=body, method="PUT",
+            headers={"Content-Type": "application/json"}
+          )
+          try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+              print(f"Firebase write: OK ({r.status})")
+          except Exception as e:
+            print(f"Firebase write FAILED: {e}")
+            exit(1)
+
+          print("Integration test complete.")
+          PYEOF
