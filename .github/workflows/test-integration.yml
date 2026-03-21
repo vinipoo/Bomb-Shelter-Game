@@ -10,30 +10,40 @@ jobs:
       - name: Fetch oref alert and write to Firebase
         run: |
           python3 << 'PYEOF'
-          import json, time, urllib.request
+          import json, time, requests
 
           FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
           SECRET       = "${{ secrets.FIREBASE_DB_SECRET }}"
           OREF_URL     = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
-          OREF_HEADERS = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-            "Referer": "https://www.oref.org.il/",
-            "X-Requested-With": "XMLHttpRequest",
-            "Accept": "application/json",
-          }
 
           now = int(time.time() * 1000)
 
-          # Step 1 — Fetch alerts.json
+          # Step 1 — Fetch alerts.json using a session with cookies
           print("Fetching alerts.json...")
           oref_status = "error"
           oref_raw    = None
           try:
-            req = urllib.request.Request(OREF_URL, headers=OREF_HEADERS)
-            with urllib.request.urlopen(req, timeout=10) as r:
-              oref_raw    = r.read().decode("utf-8").lstrip("\ufeff").strip()
+            session = requests.Session()
+            session.headers.update({
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+              "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+              "Referer": "https://www.oref.org.il/",
+              "X-Requested-With": "XMLHttpRequest",
+              "Accept": "application/json, text/plain, */*",
+              "Sec-Fetch-Dest": "empty",
+              "Sec-Fetch-Mode": "cors",
+              "Sec-Fetch-Site": "same-origin",
+            })
+            # Visit main page first to pick up any session cookies
+            session.get("https://www.oref.org.il/", timeout=10)
+            r = session.get(OREF_URL, timeout=10)
+            print(f"HTTP status: {r.status_code}")
+            if r.status_code == 200:
+              oref_raw    = r.content.decode("utf-8").lstrip("\ufeff").strip()
               oref_status = "ok"
               print(f"oref response: {oref_raw[:200]}")
+            else:
+              print(f"oref fetch FAILED: HTTP {r.status_code}")
           except Exception as e:
             print(f"oref fetch FAILED: {e}")
 
