@@ -403,7 +403,6 @@ export default function ShelterBet() {
     if (!lastWinner?.uid || !lastWinner?.alarmAt) return
     const key = `${lastWinner.alarmAt}-${lastWinner.uid}`
     if (shownPopupRef.current.has(key)) return
-    if (lastWinner.uid !== userRef.current?.id) return
     const userData = allUsers[lastWinner.uid]
     if (!userData || !lastWinner.betTs) return
     shownPopupRef.current.add(key)
