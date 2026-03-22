@@ -2,6 +2,13 @@
 Telegram Red Alert Monitor
 Monitors a Telegram channel for alarms in גבעתיים and writes to Firebase.
 Deploy to Railway.app — runs 24/7 in the cloud.
+
+Triggers:
+  ALARM:         message contains "גבעתיים" AND "ירי רקטות וטילים"
+                 → close round, pick winner, show popup
+  END OF EVENT:  message contains "סיום אירוע" AND "הודעה מפיקוד העורף" AND "דן"
+                 → open new round for next alarm
+  ANYTHING ELSE: ignored
 """
 
 import asyncio
@@ -14,10 +21,12 @@ from telethon.sessions import StringSession
 API_ID       = int(os.environ["TELEGRAM_API_ID"])
 API_HASH     = os.environ["TELEGRAM_API_HASH"]
 SESSION      = os.environ["TELEGRAM_SESSION"]
-CHANNEL      = os.environ.get("TELEGRAM_CHANNEL", "tzeva_adom_israel")
-OREF_CITY    = "גבעתיים"
+CHANNEL      = os.environ.get("TELEGRAM_CHANNEL", "red_color")
 FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
 SECRET       = os.environ["FIREBASE_DB_SECRET"]
+
+ALARM_WORDS     = ["גבעתיים", "ירי רקטות וטילים"]
+END_EVENT_WORDS = ["סיום אירוע", "הודעה מפיקוד העורף", "דן"]
 
 
 def fb_get(path):
@@ -43,25 +52,22 @@ def fb_patch(path, data):
         print(f"Firebase PATCH error: {e}")
 
 
-def process_alarm(alarm_ts):
+def close_round(alarm_ts):
+    """Close current round and announce winner. Does NOT open a new round."""
     current = fb_get("sb_current")
     if not current:
         print("No current round — skipping")
         fb_put("sb_last_alarm", alarm_ts)
-        fb_put("sb_pending_alarm", None)
         return
     if not current.get("open"):
         print("Round already closed — skipping")
-        fb_put("sb_pending_alarm", None)
         return
     if alarm_ts <= current.get("createdAt", 0):
         print("Alarm older than round — skipping")
-        fb_put("sb_pending_alarm", None)
         return
     last_alarm = fb_get("sb_last_alarm") or 0
     if alarm_ts == last_alarm:
         print("Alarm already processed — skipping")
-        fb_put("sb_pending_alarm", None)
         return
 
     bets = current.get("bets") or {}
@@ -83,15 +89,10 @@ def process_alarm(alarm_ts):
         current_wins = fb_get(f"sb_users/{winner}/totalWins") or 0
         fb_patch(f"sb_users/{winner}", {"totalWins": current_wins + 1})
 
-    new_round = {
-        "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
-        "openedAfterAlarm": True, "bettingDeadline": now + 3600000
-    }
-
-    fb_put("sb_rounds",        all_rounds)
-    fb_put("sb_current",       new_round)
-    fb_put("sb_last_alarm",    alarm_ts)
-    fb_put("sb_pending_alarm", None)
+    # Write closed round — do NOT open a new one yet
+    fb_put("sb_rounds",     all_rounds)
+    fb_put("sb_current",    done_round)
+    fb_put("sb_last_alarm", alarm_ts)
 
     if winner and winner in bets:
         fb_put("sb_last_winner", {
@@ -100,7 +101,23 @@ def process_alarm(alarm_ts):
         })
 
     winner_name = (fb_get(f"sb_users/{winner}/displayName") or winner) if winner else "—"
-    print(f"✅ Done! Winner: {winner_name} (±{round(min_diff / 1000)}s). New round: r{now}")
+    print(f"🏆 Round closed! Winner: {winner_name} (±{round(min_diff / 1000)}s)")
+
+
+def open_new_round():
+    """Open a new betting round after event ends."""
+    current = fb_get("sb_current")
+    if current and current.get("open"):
+        print("Round already open — skipping")
+        return
+
+    now = int(time.time() * 1000)
+    new_round = {
+        "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
+        "openedAfterAlarm": True, "bettingDeadline": now + 3600000
+    }
+    fb_put("sb_current", new_round)
+    print(f"✅ New round opened: r{now}")
 
 
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
@@ -111,7 +128,7 @@ async def handler(event):
     text = event.message.text or ""
     print(f"📨 [{CHANNEL}] {text[:120]}")
 
-    # One-time integration test: save first message of any type to Firebase
+    # One-time integration test: save first message to Firebase
     if not fb_get("sb_telegram_test"):
         fb_put("sb_telegram_test", {
             "ts":        int(time.time() * 1000),
@@ -121,26 +138,26 @@ async def handler(event):
         })
         print("🧪 Integration test saved to sb_telegram_test")
 
-    if OREF_CITY in text:
+    # ALARM: גבעתיים + ירי רקטות וטילים
+    if all(w in text for w in ALARM_WORDS):
         alarm_ts = int(time.time() * 1000)
-        print(f"🚨 ALARM in {OREF_CITY}! ts={alarm_ts}")
-        fb_put("sb_pending_alarm", {"ts": alarm_ts, "area": OREF_CITY})
+        print(f"🚨 ALARM detected! ts={alarm_ts}")
+        close_round(alarm_ts)
 
-        # One-time test alert
-        if not fb_get("sb_test_alert"):
-            fb_put("sb_test_alert", {
-                "ts": alarm_ts,
-                "areas": [OREF_CITY],
-                "title": text.split("\n")[0],
-                "id": str(event.id),
-            })
+    # END OF EVENT: סיום אירוע + הודעה מפיקוד העורף + דן
+    elif all(w in text for w in END_EVENT_WORDS):
+        print("🔔 End of event detected — opening new round")
+        open_new_round()
 
-        process_alarm(alarm_ts)
+    else:
+        print("↩️ Ignored (no relevant trigger)")
 
 
 async def main():
     await client.start()
-    print(f"✅ Connected. Monitoring @{CHANNEL} for '{OREF_CITY}'...")
+    print(f"✅ Connected. Monitoring @{CHANNEL}...")
+    print(f"   Alarm trigger:     {' + '.join(ALARM_WORDS)}")
+    print(f"   End event trigger: {' + '.join(END_EVENT_WORDS)}")
     await client.run_until_disconnected()
 
 
