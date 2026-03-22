@@ -22,44 +22,39 @@ jobs:
             with urllib.request.urlopen(req, timeout=10) as r:
               return json.loads(r.read().decode("utf-8"))
 
-          users = {
-            "__admin__": {
-              "displayName": "מנהל",
-              "isAdmin": True,
-              "joinedAt": 1774036485789,
-              "totalWins": 0
-            },
-            "אורי": {
-              "displayName": "אורי",
-              "joinedAt": 1774035947649,
-              "totalWins": 0
-            },
-            "אילן": {
-              "displayName": "אילן",
-              "joinedAt": 1774036244428,
-              "totalWins": 3
-            },
-            "דנה_השכנה_הטובה_ביותר": {
-              "displayName": "דנה השכנה הטובה ביותר",
-              "joinedAt": 1773937559916,
-              "totalWins": 0
-            },
-            "יוסי": {
-              "displayName": "יוסי",
-              "joinedAt": 1774037529182,
-              "totalWins": 0
-            },
-            "יפית": {
-              "displayName": "יפית",
-              "joinedAt": 1773938638648,
-              "totalWins": 0
-            },
-            "מיכל": {
-              "displayName": "מיכל",
-              "joinedAt": 1773941442062,
-              "totalWins": 0
-            }
+          import urllib.request, json as _json
+
+          FIREBASE_URL2 = "https://shelter-bet-default-rtdb.firebaseio.com"
+
+          def fb_get2(path):
+            try:
+              req = urllib.request.Request(f"{FIREBASE_URL2}/{path}.json?auth={SECRET}")
+              with urllib.request.urlopen(req, timeout=10) as r:
+                return _json.loads(r.read().decode("utf-8"))
+            except Exception as e:
+              print(f"GET error: {e}"); return None
+
+          # Reconstruct win counts from rounds history
+          rounds = fb_get2("sb_rounds") or []
+          if isinstance(rounds, dict): rounds = list(rounds.values())
+          win_counts = {}
+          for rnd in rounds:
+            w = rnd.get("winnerId")
+            if w: win_counts[w] = win_counts.get(w, 0) + 1
+
+          # Base user list — joinedAt preserved, wins computed from history
+          base_users = {
+            "__admin__": {"displayName": "מנהל", "isAdmin": True, "joinedAt": 1774036485789},
+            "אורי":      {"displayName": "אורי",  "joinedAt": 1774035947649},
+            "אילן":      {"displayName": "אילן",  "joinedAt": 1774036244428},
+            "דנה_השכנה_הטובה_ביותר": {"displayName": "דנה השכנה הטובה ביותר", "joinedAt": 1773937559916},
+            "יוסי":      {"displayName": "יוסי",  "joinedAt": 1774037529182},
+            "יפית":      {"displayName": "יפית",  "joinedAt": 1773938638648},
+            "מיכל":      {"displayName": "מיכל",  "joinedAt": 1773941442062},
+            "ברק":       {"displayName": "ברק",   "joinedAt": 1774217957126},
+            "דנה":       {"displayName": "דנה",   "joinedAt": 1774217964979},
           }
+          users = {uid: {**data, "totalWins": win_counts.get(uid, 0)} for uid, data in base_users.items()}
 
           fb_put("sb_users", users)
           print("Done! Restored users:", list(users.keys()))

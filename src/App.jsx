@@ -334,8 +334,7 @@ export default function ShelterBet() {
     if (!uid) return setLoginErr("מלא את השם 😊")
     if (allUsers[uid]) return setLoginErr("השם הזה תפוס")
     const nu = { displayName: uname.trim(), joinedAt: Date.now(), totalWins: 0, pending: true }
-    const us = { ...allUsers, [uid]: nu }
-    await setS("sb_users", us)
+    await setS(`sb_users/${uid}`, nu)
     setIsReg(false); setUname(""); setLoginErr("")
     setLoginMsg(`✅ הבקשה נשלחה! ברגע שהמנהל יאשר את "${uname.trim()}" תוכל להיכנס 🏠`)
   }
@@ -429,36 +428,36 @@ export default function ShelterBet() {
     await recordAlarmAt(new Date(alarmDt).getTime())
   }
   const approveUser = async (uid) => {
-    const { pending, ...approved } = allUsers[uid]
-    const us = { ...allUsers, [uid]: approved }
-    await setS("sb_users", us); setUsers(us)
+    await updateS(`sb_users/${uid}`, { pending: null })
+    const approved = { ...allUsers[uid] }; delete approved.pending
+    setUsers({ ...allUsers, [uid]: approved })
     setAdminMsg(`✅ ${allUsers[uid].displayName} אושר והצטרף לבניין! 🏠`); setTimeout(() => setAdminMsg(""), 4000)
   }
   const rejectUser = async (uid) => {
     const name = allUsers[uid]?.displayName || uid
     if (!window.confirm(`לדחות את "${name}"?`)) return
-    const us = { ...allUsers }; delete us[uid]
-    await setS("sb_users", us); setUsers(us)
+    await setS(`sb_users/${uid}`, null)
+    const us = { ...allUsers }; delete us[uid]; setUsers(us)
     setAdminMsg(`🚫 הבקשה של "${name}" נדחתה`); setTimeout(() => setAdminMsg(""), 4000)
   }
   const deleteUser = async (uid) => {
     const name = allUsers[uid]?.displayName || uid
     if (!window.confirm(`למחוק את המשתמש "${name}"?`)) return
-    const us = { ...allUsers }; delete us[uid]
     const cr = await getS("sb_current")
     if (cr?.bets?.[uid]) { const nb = { ...cr.bets }; delete nb[uid]; const ucr = { ...cr, bets: nb }; await setS("sb_current", ucr); setRound(ucr) }
-    await setS("sb_users", us); setUsers(us)
+    await setS(`sb_users/${uid}`, null)
+    const us = { ...allUsers }; delete us[uid]; setUsers(us)
     setAdminMsg(`✅ המשתמש "${name}" נמחק`); setTimeout(() => setAdminMsg(""), 4000)
   }
   const renameUser = async (uid) => {
     const newName = editUserName.trim()
     if (!newName) return
-    const us = { ...allUsers, [uid]: { ...allUsers[uid], displayName: newName } }
     const allR = rounds.map(r => r.bets?.[uid] ? { ...r, bets: { ...r.bets, [uid]: { ...r.bets[uid], name: newName } } } : r)
     const cr = await getS("sb_current")
     if (cr?.bets?.[uid]) { const ucr = { ...cr, bets: { ...cr.bets, [uid]: { ...cr.bets[uid], name: newName } } }; await setS("sb_current", ucr); setRound(ucr) }
-    await Promise.all([setS("sb_users", us), setS("sb_rounds", allR)])
-    setUsers(us); setRounds(allR); setEditingUid(null); setEditUserName("")
+    await Promise.all([updateS(`sb_users/${uid}`, { displayName: newName }), setS("sb_rounds", allR)])
+    setUsers({ ...allUsers, [uid]: { ...allUsers[uid], displayName: newName } })
+    setRounds(allR); setEditingUid(null); setEditUserName("")
     if (user?.id === uid) setUser(u => ({ ...u, displayName: newName }))
     setAdminMsg(`✅ שם עודכן ל-"${newName}"`); setTimeout(() => setAdminMsg(""), 4000)
   }
@@ -469,23 +468,33 @@ export default function ShelterBet() {
     const allR = [...rounds]; const r = { ...allR[idx] }
     let winner = null, minDiff = Infinity
     for (const [uid, bet] of Object.entries(r.bets || {})) { const d = Math.abs(bet.ts - alarmTs); if (d < minDiff) { minDiff = d; winner = uid } }
-    const us = { ...allUsers }
-    if (r.winnerId && us[r.winnerId]) us[r.winnerId].totalWins = Math.max(0, (us[r.winnerId].totalWins || 0) - 1)
-    if (winner && us[winner]) us[winner].totalWins = (us[winner].totalWins || 0) + 1
     allR[idx] = { ...r, alarmAt: alarmTs, winnerId: winner }
-    await Promise.all([setS("sb_rounds", allR), setS("sb_users", us)])
-    setRounds(allR); setUsers(us); setEditRoundIdx(null); setEditRoundDt("")
-    setAdminMsg(`✅ סיבוב #${idx + 1} עודכן — זוכה: ${us[winner]?.displayName || winner || "—"}`)
+    const writes = [setS("sb_rounds", allR)]
+    const updatedUsers = { ...allUsers }
+    if (r.winnerId && r.winnerId !== winner && allUsers[r.winnerId]) {
+      const w = Math.max(0, (allUsers[r.winnerId].totalWins || 0) - 1)
+      writes.push(updateS(`sb_users/${r.winnerId}`, { totalWins: w }))
+      updatedUsers[r.winnerId] = { ...updatedUsers[r.winnerId], totalWins: w }
+    }
+    if (winner && winner !== r.winnerId && allUsers[winner]) {
+      const w = (allUsers[winner].totalWins || 0) + 1
+      writes.push(updateS(`sb_users/${winner}`, { totalWins: w }))
+      updatedUsers[winner] = { ...updatedUsers[winner], totalWins: w }
+    }
+    await Promise.all(writes)
+    setRounds(allR); setUsers(updatedUsers); setEditRoundIdx(null); setEditRoundDt("")
+    setAdminMsg(`✅ סיבוב #${idx + 1} עודכן — זוכה: ${updatedUsers[winner]?.displayName || winner || "—"}`)
     setTimeout(() => setAdminMsg(""), 5000)
   }
   const doAdminFromLogin = async () => {
     if (adminEntryPw !== ADMIN_PW) return setAdminEntryErr("סיסמה שגויה 🙈")
     const adminId = "__admin__"
-    if (!allUsers[adminId]) {
-      await setS("sb_users", { ...allUsers, [adminId]: { displayName: "מנהל", joinedAt: Date.now(), totalWins: 0, isAdmin: true } })
+    const existingAdmin = await getS(`sb_users/${adminId}`)
+    if (!existingAdmin) {
+      await setS(`sb_users/${adminId}`, { displayName: "מנהל", joinedAt: Date.now(), totalWins: 0, isAdmin: true })
     }
     setSession({ uid: adminId })
-    setUser({ id: adminId, displayName: "מנהל", totalWins: 0, isAdmin: true, ...allUsers[adminId] })
+    setUser({ id: adminId, displayName: "מנהל", totalWins: 0, isAdmin: true, ...existingAdmin })
     setAdminOk(true); setTab("admin"); setPage("app")
   }
 
