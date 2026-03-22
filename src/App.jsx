@@ -283,7 +283,7 @@ export default function ShelterBet() {
   const [lastWinner, setLastWinner] = useState(null)
 
   const userRef = useRef(null)
-  const shownPopupRef = useRef(new Set(JSON.parse(localStorage.getItem("shownPopups") || "[]")))
+  const shownPopupAlarmRef = useRef(localStorage.getItem("shownPopupAlarm") || "")
 
   useEffect(() => {
     const session = getSession()
@@ -398,15 +398,15 @@ export default function ShelterBet() {
   }, [])
 
 
-  // Show winner popup when sb_last_winner updates (set by browser or GitHub Actions)
+  // Show winner popup when sb_last_winner updates — at most once per alarm
   useEffect(() => {
     if (!lastWinner?.uid || !lastWinner?.alarmAt) return
-    const key = `${lastWinner.alarmAt}-${lastWinner.uid}`
-    if (shownPopupRef.current.has(key)) return
+    const key = String(lastWinner.alarmAt)
+    if (shownPopupAlarmRef.current === key) return
     const userData = allUsers[lastWinner.uid]
     if (!userData || !lastWinner.betTs) return
-    shownPopupRef.current.add(key)
-    localStorage.setItem("shownPopups", JSON.stringify([...shownPopupRef.current]))
+    shownPopupAlarmRef.current = key
+    localStorage.setItem("shownPopupAlarm", key)
     setWinnerPopup({
       winner: { name: userData.displayName || lastWinner.uid, badge: getBadge(userData.totalWins || 0), totalWins: userData.totalWins || 0 },
       alarmAt: lastWinner.alarmAt,
