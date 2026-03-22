@@ -283,7 +283,7 @@ export default function ShelterBet() {
   const [lastWinner, setLastWinner] = useState(null)
 
   const userRef = useRef(null)
-  const shownPopupRef = useRef(new Set())
+  const shownPopupRef = useRef(new Set(JSON.parse(localStorage.getItem("shownPopups") || "[]")))
 
   useEffect(() => {
     const session = getSession()
@@ -407,6 +407,7 @@ export default function ShelterBet() {
     const userData = allUsers[lastWinner.uid]
     if (!userData || !lastWinner.betTs) return
     shownPopupRef.current.add(key)
+    localStorage.setItem("shownPopups", JSON.stringify([...shownPopupRef.current]))
     setWinnerPopup({
       winner: { name: userData.displayName || lastWinner.uid, badge: getBadge(userData.totalWins || 0), totalWins: userData.totalWins || 0 },
       alarmAt: lastWinner.alarmAt,
