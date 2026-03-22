@@ -311,9 +311,9 @@ export default function ShelterBet() {
     return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); unsubLastWinner(); clearTimeout(t) }
   }, [])
 
-  // Auto-open a round if none exists — only after Firebase confirms sb_current is empty
+  // Auto-open a round if none exists or if the current round is stuck closed
   useEffect(() => {
-    if (!roundLoaded || round !== null) return
+    if (!roundLoaded || (round !== null && round.open)) return
     set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 })
   }, [roundLoaded, round])
 
@@ -1037,7 +1037,7 @@ export default function ShelterBet() {
                           <span style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 600 }}>{fmtDate(r.completedAt)}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ color: "var(--yellow)", fontWeight: 700, fontSize: "13px" }}>🏆 {r.bets[r.winnerId]?.name || r.winnerId}</span>
+                          <span style={{ color: "var(--yellow)", fontWeight: 700, fontSize: "13px" }}>🏆 {r.bets?.[r.winnerId]?.name || r.winnerId}</span>
                           <span style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 600 }}>±{fmtDiff(Math.abs((r.bets?.[r.winnerId]?.ts || 0) - r.alarmAt))} · {Object.keys(r.bets || {}).length} שכנים</span>
                         </div>
                       </div>
@@ -1129,7 +1129,7 @@ export default function ShelterBet() {
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: editRoundIdx === realIdx ? "10px" : "0" }}>
                             <div>
                               <span style={{ color: "var(--sky)", fontWeight: 700, fontSize: "13px" }}>סיבוב #{realIdx + 1}</span>
-                              <span style={{ color: "var(--yellow)", fontSize: "12px", fontWeight: 600 }}> · 🏆 {r.bets[r.winnerId]?.name || r.winnerId || "—"}</span>
+                              <span style={{ color: "var(--yellow)", fontSize: "12px", fontWeight: 600 }}> · 🏆 {r.bets?.[r.winnerId]?.name || r.winnerId || "—"}</span>
                               <div style={{ color: "var(--dim)", fontSize: "11px", fontWeight: 600, marginTop: "2px" }}>⏰ {fmtDate(r.alarmAt)}</div>
                             </div>
                             {editRoundIdx === realIdx

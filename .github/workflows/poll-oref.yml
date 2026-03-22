@@ -71,7 +71,13 @@ jobs:
               return
 
             if not current.get("open"):
-              print("Round already closed — skipping")
+              print("Round already closed — opening a new one")
+              now = int(time.time() * 1000)
+              new_round = {
+                "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
+                "openedAfterAlarm": True, "bettingDeadline": now + 3600000
+              }
+              fb_put("sb_current", new_round)
               fb_put("sb_pending_alarm", None)
               return
 
