@@ -691,16 +691,16 @@ export default function ShelterBet() {
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
                       <span style={{ fontSize: "24px" }}>🏆</span>
-                      <span style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "22px", color: "var(--yellow)" }}>{lastR.bets[lastR.winnerId]?.name || lastR.winnerId}</span>
+                      <span style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "22px", color: "var(--yellow)" }}>{lastR.bets?.[lastR.winnerId]?.name || lastR.winnerId}</span>
                     </div>
                     <div style={{ display: "flex", gap: "16px" }}>
                       <div>
                         <div style={{ color: "var(--dim)", fontSize: "10px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase" }}>הפרש</div>
-                        <div style={{ color: "var(--mint)", fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "18px" }}>{fmtDiff(Math.abs((lastR.bets[lastR.winnerId]?.ts || 0) - lastR.alarmAt))}</div>
+                        <div style={{ color: "var(--mint)", fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "18px" }}>{fmtDiff(Math.abs((lastR.bets?.[lastR.winnerId]?.ts || 0) - lastR.alarmAt))}</div>
                       </div>
                       <div>
                         <div style={{ color: "var(--dim)", fontSize: "10px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase" }}>שכנים</div>
-                        <div style={{ color: "var(--text)", fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "18px" }}>{Object.keys(lastR.bets).length}</div>
+                        <div style={{ color: "var(--text)", fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "18px" }}>{Object.keys(lastR.bets || {}).length}</div>
                       </div>
                     </div>
                   </div>
@@ -794,9 +794,9 @@ export default function ShelterBet() {
                         <div style={{ padding: "10px 16px", background: "rgba(251,191,36,.05)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: "10px" }}>
                           <span style={{ fontSize: "20px" }}>🏆</span>
                           <div>
-                            <span style={{ fontWeight: 800, fontSize: "14px", color: "var(--yellow)" }}>{r.bets[r.winnerId].name}</span>
+                            <span style={{ fontWeight: 800, fontSize: "14px", color: "var(--yellow)" }}>{r.bets?.[r.winnerId]?.name || r.winnerId}</span>
                             <span style={{ color: "var(--dim)", fontSize: "11px", marginRight: "8px" }}>
-                              הפרש: <span style={{ color: "var(--mint)", fontWeight: 700 }}>{fmtDiff(Math.abs((r.bets[r.winnerId].ts || 0) - r.alarmAt))}</span>
+                              הפרש: <span style={{ color: "var(--mint)", fontWeight: 700 }}>{fmtDiff(Math.abs((r.bets?.[r.winnerId]?.ts || 0) - r.alarmAt))}</span>
                             </span>
                           </div>
                         </div>
@@ -1041,7 +1041,7 @@ export default function ShelterBet() {
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                           <span style={{ color: "var(--yellow)", fontWeight: 700, fontSize: "13px" }}>🏆 {r.bets[r.winnerId]?.name || r.winnerId}</span>
-                          <span style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 600 }}>±{fmtDiff(Math.abs((r.bets[r.winnerId]?.ts || 0) - r.alarmAt))} · {Object.keys(r.bets).length} שכנים</span>
+                          <span style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 600 }}>±{fmtDiff(Math.abs((r.bets?.[r.winnerId]?.ts || 0) - r.alarmAt))} · {Object.keys(r.bets || {}).length} שכנים</span>
                         </div>
                       </div>
                     ))
