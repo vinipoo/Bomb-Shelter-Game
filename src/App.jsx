@@ -673,13 +673,10 @@ export default function ShelterBet() {
                 )}
               </div>
             ) : (
-              <div className="card" style={{ padding: "16px 18px", marginBottom: "14px", borderColor: "rgba(251,113,133,.3)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <span style={{ fontSize: "30px", animation: "float 2s ease-in-out infinite" }}>⏳</span>
-                  <div>
-                    <div style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "16px", color: "var(--red)" }}>ממתינים לסיבוב הבא</div>
-                    <div style={{ color: "var(--dim)", fontSize: "12px", fontWeight: 600 }}>המנהל יפתח הימורים לאחר האזעקה הבאה</div>
-                  </div>
+              <div className="card" style={{ padding: "18px 20px", marginBottom: "14px", borderColor: "rgba(251,191,36,.3)", textAlign: "center" }}>
+                <span style={{ fontSize: "32px", display: "block", marginBottom: "10px", animation: "float 2s ease-in-out infinite" }}>⏳</span>
+                <div style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "16px", color: "var(--yellow)", fontWeight: 800, lineHeight: 1.5 }}>
+                  הסיבוב יפתח ברגע קבלת ההודעה על סיום האירוע
                 </div>
               </div>
             )}
