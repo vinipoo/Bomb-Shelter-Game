@@ -14,16 +14,21 @@ jobs:
           python3 << 'PYEOF'
           import json, sys, time, urllib.request, urllib.error
 
-          FIREBASE_URL = "https://shelter-bet-default-rtdb.firebaseio.com"
-          SECRET       = "${{ secrets.FIREBASE_DB_SECRET }}"
-          OREF_CITY    = "גבעתיים"
-          OREF_URL     = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
-          OREF_HEADERS = {
+          FIREBASE_URL   = "https://shelter-bet-default-rtdb.firebaseio.com"
+          SECRET         = "${{ secrets.FIREBASE_DB_SECRET }}"
+          OREF_URL       = "https://www.oref.org.il/WarningMessages/alert/alerts.json"
+          OREF_HEADERS   = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
             "Referer": "https://www.oref.org.il/",
             "X-Requested-With": "XMLHttpRequest",
             "Accept": "application/json",
           }
+
+          # Alert type filters
+          ALARM_CITY     = "גבעתיים"
+          ALARM_TYPE     = "ירי רקטות וטילים"
+          END_TYPE       = "סיום אירוע - הודעה מפיקוד העורף"
+          END_REGION     = "דן"
 
           def fb_get(path):
             try:
@@ -61,39 +66,29 @@ jobs:
             except Exception as e:
               print(f"Oref fetch error: {e}"); return None
 
-          def process_alarm(alarm_ts):
-            # ── Get current round ──────────────────────────────────────────
+          # ── Close round on alarm (winner announced, new round NOT opened yet) ──
+          def close_round(alarm_ts):
             current = fb_get("sb_current")
             if not current:
-              print("No current round in Firebase")
+              print("No current round — recording alarm only")
               fb_put("sb_last_alarm", alarm_ts)
-              fb_put("sb_pending_alarm", None)
               return
 
             if not current.get("open"):
-              print("Round already closed — opening a new one")
-              now = int(time.time() * 1000)
-              new_round = {
-                "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
-                "openedAfterAlarm": True, "bettingDeadline": now + 3600000
-              }
-              fb_put("sb_current", new_round)
-              fb_put("sb_pending_alarm", None)
+              print("Round already closed — skipping alarm")
               return
 
             round_created = current.get("createdAt", 0)
             if alarm_ts <= round_created:
               print(f"Alarm ts {alarm_ts} <= round start {round_created} — skipping")
-              fb_put("sb_pending_alarm", None)
               return
 
             last_alarm = fb_get("sb_last_alarm") or 0
             if alarm_ts == last_alarm:
               print("Alarm already processed — skipping")
-              fb_put("sb_pending_alarm", None)
               return
 
-            # ── Find winner ────────────────────────────────────────────────
+            # Find winner
             bets = current.get("bets") or {}
             winner, min_diff = None, float("inf")
             for uid, bet in bets.items():
@@ -102,29 +97,20 @@ jobs:
                 min_diff, winner = diff, uid
             print(f"Winner: {winner}, diff: {min_diff}ms")
 
-            # ── Close round ────────────────────────────────────────────────
+            # Close round — leave sb_current closed (waiting for end-of-event)
             now = int(time.time() * 1000)
             done_round = {**current, "open": False, "alarmAt": alarm_ts, "winnerId": winner, "completedAt": now}
             all_rounds = fb_get("sb_rounds") or []
             if isinstance(all_rounds, dict): all_rounds = list(all_rounds.values())
             all_rounds.append(done_round)
 
-            # ── Update winner's totalWins only ─────────────────────────────
             if winner:
               current_wins = fb_get(f"sb_users/{winner}/totalWins") or 0
               fb_patch(f"sb_users/{winner}", {"totalWins": current_wins + 1})
 
-            # ── Open new round ─────────────────────────────────────────────
-            new_round = {
-              "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
-              "openedAfterAlarm": True, "bettingDeadline": now + 3600000
-            }
-
-            # ── Write to Firebase ──────────────────────────────────────────
-            fb_put("sb_rounds",        all_rounds)
-            fb_put("sb_current",       new_round)
-            fb_put("sb_last_alarm",    alarm_ts)
-            fb_put("sb_pending_alarm", None)
+            fb_put("sb_rounds",     all_rounds)
+            fb_put("sb_current",    done_round)   # closed — round opens only on end-of-event
+            fb_put("sb_last_alarm", alarm_ts)
             if winner and winner in bets:
               fb_put("sb_last_winner", {
                 "uid": winner, "alarmAt": alarm_ts,
@@ -132,10 +118,25 @@ jobs:
               })
 
             winner_name = (fb_get(f"sb_users/{winner}/displayName") or winner) if winner else "—"
-            print(f"Done! Winner: {winner_name} (±{round(min_diff/1000)}s). New round: r{now}")
+            print(f"Round closed! Winner: {winner_name} (±{round(min_diff/1000)}s). Waiting for end-of-event.")
 
-          # ── Main loop — poll every 2 seconds for 55 seconds ───────────────
-          last_alarm_id = None
+          # ── Open new round on end-of-event notification ──────────────────────
+          def open_new_round():
+            current = fb_get("sb_current")
+            if current and current.get("open"):
+              print("Round already open — skipping end-of-event")
+              return
+
+            now = int(time.time() * 1000)
+            new_round = {
+              "id": f"r{now}", "createdAt": now, "open": True, "bets": {},
+              "openedAfterAlarm": True, "bettingDeadline": now + 3600000
+            }
+            fb_put("sb_current", new_round)
+            print(f"End-of-event received — new round opened: r{now}")
+
+          # ── Main loop — poll every 2 seconds for 55 seconds ─────────────────
+          processed_ids = set()
           test_alert_done = bool(fb_get("sb_test_alert"))
           start = time.time()
 
@@ -143,35 +144,41 @@ jobs:
             text = oref_fetch()
             if text and text.strip() not in ("", "null", "[]"):
               try:
-                obj   = json.loads(text)
-                areas = obj.get("data", []) if isinstance(obj, dict) else []
+                obj      = json.loads(text)
+                areas    = obj.get("data", []) if isinstance(obj, dict) else []
+                title    = obj.get("title", "") if isinstance(obj, dict) else ""
                 alert_id = obj.get("id", "")
 
-                # ── One-time test: save first alert of any type ────────────
+                # One-time test: save first alert of any type
                 if areas and not test_alert_done:
                   fb_put("sb_test_alert", {
-                    "ts":    int(time.time() * 1000),
-                    "areas": areas,
-                    "title": obj.get("title", ""),
-                    "id":    alert_id,
+                    "ts": int(time.time() * 1000), "areas": areas, "title": title, "id": alert_id,
                   })
                   test_alert_done = True
-                  print(f"Test alert saved: {obj.get('title','')} — {areas}")
+                  print(f"Test alert saved: {title} — {areas}")
 
-                if OREF_CITY in areas and alert_id != last_alarm_id:
+                if alert_id in processed_ids:
+                  pass  # already handled this alert in this run
+
+                # Rocket/missile alarm in גבעתיים → close round, announce winner
+                elif ALARM_TYPE in title and ALARM_CITY in areas:
                   alarm_ts = int(time.time() * 1000)
-                  print(f"ALARM in {OREF_CITY}! id={alert_id} ts={alarm_ts}")
-                  last_alarm_id = alert_id
-                  fb_put("sb_pending_alarm", {"ts": alarm_ts, "area": OREF_CITY})
-                  process_alarm(alarm_ts)
+                  print(f"ROCKET ALARM in {ALARM_CITY}! id={alert_id}")
+                  processed_ids.add(alert_id)
+                  close_round(alarm_ts)
+
+                # End-of-event in דן region → open new round
+                elif END_TYPE in title and END_REGION in areas:
+                  print(f"END OF EVENT in {END_REGION}! id={alert_id}")
+                  processed_ids.add(alert_id)
+                  open_new_round()
+
+                else:
+                  print(f"Ignored alert: '{title}' — {areas}")
+
               except Exception as e:
                 print(f"Parse error: {e}")
-            else:
-              # Check if browser stored a pending alarm
-              pending = fb_get("sb_pending_alarm")
-              if pending and isinstance(pending, dict) and pending.get("ts"):
-                print(f"Found browser-stored alarm ts={pending['ts']}")
-                process_alarm(pending["ts"])
+
             time.sleep(2)
 
           print("Loop complete.")

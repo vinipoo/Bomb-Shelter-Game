@@ -311,9 +311,9 @@ export default function ShelterBet() {
     return () => { unsubUsers(); unsubRounds(); unsubCurrent(); unsubLastAlarm(); unsubLastWinner(); clearTimeout(t) }
   }, [])
 
-  // Auto-open a round if none exists or if the current round is stuck closed
+  // Auto-open a round only if sb_current is completely missing (first launch / empty DB)
   useEffect(() => {
-    if (!roundLoaded || (round !== null && round.open)) return
+    if (!roundLoaded || round !== null) return
     set(ref(db, "sb_current"), { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 })
   }, [roundLoaded, round])
 
@@ -382,13 +382,12 @@ export default function ShelterBet() {
       const currentWins = (await getS(`sb_users/${winner}/totalWins`)) || 0
       await updateS(`sb_users/${winner}`, { totalWins: currentWins + 1 })
     }
-    // Auto-open next round immediately
-    const nr = { id: `r${Date.now()}`, createdAt: Date.now(), open: true, bets: {}, openedAfterAlarm: true, bettingDeadline: Date.now() + 60 * 60 * 1000 }
-    await Promise.all([setS("sb_rounds", allR), setS("sb_current", nr), setS("sb_last_alarm", alarmTs)])
+    // Close round — new round opens only when end-of-event notification arrives
+    await Promise.all([setS("sb_rounds", allR), setS("sb_current", done), setS("sb_last_alarm", alarmTs)])
     const us = await getS("sb_users") || {}
-    setRounds(allR); setUsers(us); setRound(nr); setAlarmDt("")
+    setRounds(allR); setUsers(us); setRound(done); setAlarmDt("")
     const wName = us[winner]?.displayName || winner || "—"
-    setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} · סיבוב #${allR.length + 1} נפתח 🚀`)
+    setAdminMsg(`🏆 ${wName} ניחש הכי קרוב! הפרש: ${fmtDiff(minDiff)} — ממתינים לסיום האירוע לפתיחת סיבוב חדש`)
     setWinAnim(true); setTimeout(() => setWinAnim(false), 2500)
     setDetectedAlarm(null)
     if (winner && bets[winner]) {
