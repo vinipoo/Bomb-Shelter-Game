@@ -181,8 +181,8 @@ jobs:
               print(f"ROCKET ALARM in {ALARM_CITY}!")
               close_round(ts_ms)
 
-            elif END_KEYWORD in text:
-              print("END OF EVENT detected!")
+            elif END_KEYWORD in text and "דן" in text:
+              print("END OF EVENT for דן detected!")
               open_new_round()
 
           if new_max_id > last_id:
