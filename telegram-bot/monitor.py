@@ -103,11 +103,6 @@ def close_round(alarm_ts):
     winner_name = (fb_get(f"sb_users/{winner}/displayName") or winner) if winner else "—"
     print(f"🏆 Round closed! Winner: {winner_name} (±{round(min_diff / 1000)}s)")
 
-    # If no bets were placed, open the next round immediately (no end-of-event needed)
-    if not bets:
-        print("No bets in this round — opening next round immediately")
-        open_new_round()
-
 
 def open_new_round():
     """Open a new betting round after event ends."""
