@@ -280,6 +280,7 @@ export default function ShelterBet() {
   const [lastAlarm, setLastAlarm] = useState(null)
   const [orefPoll, setOrefPoll] = useState(null)
   const [timeLeft, setTimeLeft] = useState(null)
+  const [timeSinceAlarm, setTimeSinceAlarm] = useState(null)
   const [lastWinner, setLastWinner] = useState(null)
 
   const userRef = useRef(null)
@@ -421,6 +422,15 @@ export default function ShelterBet() {
     const iv = setInterval(tick, 1000)
     return () => clearInterval(iv)
   }, [round?.open, round?.bettingDeadline])
+
+  // Time-since-alarm counter — ticks every second while round is closed and alarmAt is known
+  useEffect(() => {
+    if (round?.open || !round?.alarmAt) { setTimeSinceAlarm(null); return }
+    const tick = () => setTimeSinceAlarm(Date.now() - round.alarmAt)
+    tick()
+    const iv = setInterval(tick, 1000)
+    return () => clearInterval(iv)
+  }, [round?.open, round?.alarmAt])
 
   const recordAlarm = async () => {
     if (!alarmDt) return setAdminMsg("בחר את זמן האזעקה")
@@ -686,6 +696,14 @@ export default function ShelterBet() {
                 <div style={{ fontFamily: "'Noto Sans Hebrew',sans-serif", fontSize: "16px", color: "var(--yellow)", fontWeight: 800, lineHeight: 1.5 }}>
                   הסיבוב יפתח ברגע קבלת ההודעה על סיום האירוע
                 </div>
+                {timeSinceAlarm !== null && (
+                  <div style={{ marginTop: "14px", padding: "10px 14px", background: "rgba(0,0,0,.25)", borderRadius: "12px" }}>
+                    <div style={{ fontSize: "11px", color: "var(--dim)", fontWeight: 700, marginBottom: "4px" }}>⏱ זמן מאז האזעקה</div>
+                    <div style={{ fontFamily: "'Noto Sans Hebrew', sans-serif", fontSize: "36px", fontWeight: 900, letterSpacing: "3px", color: "var(--yellow)" }}>
+                      {fmtCountdown(timeSinceAlarm)}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
