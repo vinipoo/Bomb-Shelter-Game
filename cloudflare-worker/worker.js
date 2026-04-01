@@ -123,6 +123,21 @@ export default {
       await processAlarm(pending.ts, secret)
     }
 
+    // Fallback: if round has been closed for >60 min, open a new one
+    // (handles case where Telegram bot is down and missed end-of-event)
+    const current = await fbGet("sb_current", secret)
+    if (current && !current.open && current.alarmAt) {
+      const minutesSinceAlarm = (Date.now() - current.alarmAt) / 60000
+      if (minutesSinceAlarm > 60) {
+        const now = Date.now()
+        await fbPut("sb_current", {
+          id: `r${now}`, createdAt: now, open: true, bets: {},
+          openedAfterAlarm: true, bettingDeadline: now + 3600000
+        }, secret)
+        console.log(`Fallback: opened new round after ${Math.round(minutesSinceAlarm)}min closed`)
+      }
+    }
+
     console.log("Done.")
   },
 }

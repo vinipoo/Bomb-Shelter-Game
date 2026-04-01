@@ -154,11 +154,22 @@ async def handler(event):
 
 
 async def main():
-    await client.start()
-    print(f"✅ Connected. Monitoring @{CHANNEL}...")
-    print(f"   Alarm trigger:     {' + '.join(ALARM_WORDS)}")
-    print(f"   End event trigger: {' + '.join(END_EVENT_WORDS)}")
-    await client.run_until_disconnected()
+    while True:
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                print("❌ Session not authorized — cannot reconnect")
+                break
+            print(f"✅ Connected. Monitoring @{CHANNEL}...")
+            print(f"   Alarm trigger:     {' + '.join(ALARM_WORDS)}")
+            print(f"   End event trigger: {' + '.join(END_EVENT_WORDS)}")
+            fb_put("sb_bot_heartbeat", {"ts": int(time.time() * 1000), "status": "connected"})
+            await client.run_until_disconnected()
+            print("⚠️ Disconnected — reconnecting in 10s...")
+        except Exception as e:
+            print(f"❌ Error: {e} — reconnecting in 10s...")
+        fb_put("sb_bot_heartbeat", {"ts": int(time.time() * 1000), "status": "reconnecting"})
+        await asyncio.sleep(10)
 
 
 if __name__ == "__main__":
